@@ -1,0 +1,7 @@
+#!/bin/bash
+# Debug build: T2 with a log line for every barcode capture and state change.
+cd "$(dirname "$0")"
+mkdir -p build/dbg
+perl -0pe 's|(static void\nbarcode_finish \(void\)\n\{\n    uint8_t index = 0U;\n    uint8_t reason = barcode_decode\(g_lc.elements, g_lc.count, &index\);\n)|$1    tm_printf((UB *)"DBG finish count %d reason %d w %d %d %d %d %d %d %d %d %d %d\\n", (INT)g_lc.count, (INT)reason, g_lc.elements[0], g_lc.elements[1], g_lc.elements[2], g_lc.elements[3], g_lc.elements[4], g_lc.elements[5], g_lc.elements[6], g_lc.elements[7], g_lc.elements[8], g_lc.elements[9]);\n|; s|(static void\nbarcode_step \(int32_t n_bar, uint16_t odom\)\n\{\n    bool const b_was_bar = g_lc.b_bar;\n)|$1    static int s_prev = -1;\n    if ((int)g_lc.bc != s_prev) { tm_printf((UB *)"DBG bc %d -> %d count %d n %d odom %d\\n", s_prev, (INT)g_lc.bc, (INT)g_lc.count, (INT)n_bar, (INT)odom); s_prev = (int)g_lc.bc; }\n|; s|#include "(subsystem3.h\|drv_ir_adc.h)"|#include "../../../../app_program/subsystem3/$1"|g; s|#include "\.\./subsystem|#include "../../../../app_program/subsystem|g' ../../app_program/subsystem3/task_line.c > build/dbg/task_line.c
+SRC=$(cd ../.. && find app_program -name "*.c" | grep -v task_line.c | sort | sed "s|^|../../|")
+cc -std=c11 -D_DEFAULT_SOURCE -O1 -g -Istub -I. -DAPP_TEST=0 -DTM_MQTT=1 -DAPP_WATCHDOG=1 -w -o build/sim_dbg $SRC build/dbg/task_line.c sim_kernel.c sim_hw.c sim_world.c sim_main.c -lpthread -lm

@@ -1,0 +1,675 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PicoCar Telemetry</title>
+<link rel="stylesheet" href="/theme.css">
+<style>
+:root { --band-a: #DCE0D8; --band-b: #CBD1C8; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --band-a: #28303A; --band-b: #333D48; } }
+:root[data-theme="dark"] { --band-a: #28303A; --band-b: #333D48; }
+
+.view-h { display: flex; align-items: flex-end; gap: 16px; flex-wrap: wrap; margin: 6px 0 16px; }
+.view-h h1 { font-family: var(--display); font-weight: 700; font-size: 40px; line-height: 1; margin: 0; }
+.view-h p { margin: 0; color: var(--ink-2); }
+.stack { display: flex; flex-direction: column; gap: 18px; }
+
+/* runs summary */
+.summary { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 18px; margin-bottom: 18px; }
+.outbar { display: flex; height: 14px; border-radius: 7px; overflow: hidden; gap: 2px; background: var(--sunk); margin: 6px 0 10px; }
+.outbar span { display: block; height: 100%; }
+.outbar span:first-child { border-radius: 7px 0 0 7px; } .outbar span:last-child { border-radius: 0 7px 7px 0; }
+.outkey { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; color: var(--ink-2); }
+.outkey i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; }
+.big { font-family: var(--display); font-weight: 700; font-size: 48px; line-height: 1; font-variant-numeric: tabular-nums; }
+.big small { font-family: var(--body); font-size: 15px; font-weight: 400; color: var(--muted); margin-left: 6px; }
+
+.filters { display: flex; gap: 12px; flex-wrap: wrap; align-items: end; margin-bottom: 12px; }
+.letters { font-family: var(--mono); font-weight: 600; letter-spacing: 0.06em; }
+.idcell { color: var(--muted); font-family: var(--mono); font-size: 12.5px; }
+
+/* charts */
+.charts { position: relative; }
+.panel { margin-bottom: 8px; }
+.panel-head { display: flex; gap: 14px; align-items: baseline; font-size: 13px; margin-bottom: 2px; }
+.panel-head b { font-family: var(--display); font-size: 16px; font-weight: 600; }
+.key { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
+.key i { display: inline-block; width: 16px; height: 3px; border-radius: 2px; }
+svg.chart { display: block; width: 100%; overflow: visible; }
+svg.chart text { fill: var(--muted); font-size: 11px; font-family: var(--body); }
+svg.chart .grid { stroke: var(--rule); stroke-width: 1; }
+svg.chart .zero { stroke: var(--rule-strong); stroke-width: 1.2; }
+svg.chart .cross { stroke: var(--ink); stroke-width: 1; stroke-dasharray: 3 3; }
+.tip { position: absolute; pointer-events: none; background: var(--panel); border: 1px solid var(--rule-strong);
+  border-radius: var(--r-inner); padding: 9px 11px; font-size: 13px; box-shadow: 0 12px 28px -12px rgba(0,0,0,0.45);
+  min-width: 180px; z-index: 20; display: none; }
+.tip .row { display: flex; align-items: center; gap: 8px; }
+.tip .row strong { font-family: var(--display); font-size: 15px; font-variant-numeric: tabular-nums; min-width: 46px; text-align: right; }
+.tip i { display: inline-block; width: 12px; height: 3px; border-radius: 2px; }
+.tip .t { color: var(--muted); margin-bottom: 4px; }
+
+/* run detail */
+.titlebar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.titlebar input.label { font-family: var(--display); font-size: 34px; font-weight: 700; border-color: transparent; background: transparent;
+  padding: 0 6px; flex: 1; min-width: 200px; }
+.titlebar input.label:hover, .titlebar input.label:focus { border-color: var(--rule-strong); background: var(--sunk); }
+.meta { color: var(--muted); margin: 6px 0 18px; font-size: 14px; }
+.confirm { display: none; margin-top: 12px; padding: 12px 14px; border: 1px solid var(--stop); border-radius: var(--r-inner);
+  background: color-mix(in srgb, var(--stop) 8%, transparent); }
+.confirm.show { display: block; }
+.two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; }
+.loglist { max-height: 440px; }
+.loglist .console { color: var(--muted); }
+.loglist .t { color: var(--muted); }
+.ev-fault { color: var(--stop); font-weight: 600; }
+.ev-barcode { color: var(--amber); font-weight: 700; }
+.statetimes { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+.statetimes span { font-size: 13px; padding: 3px 10px; border-radius: 999px; background: var(--sunk); border: 1px solid var(--rule); color: var(--ink-2); }
+.statetimes b { font-family: var(--display); font-weight: 600; margin-left: 4px; color: var(--ink); }
+textarea { width: 100%; min-height: 84px; resize: vertical; }
+
+/* live */
+.live-head { display: flex; align-items: center; gap: 12px; }
+.pulse { width: 12px; height: 12px; border-radius: 50%; background: var(--rule-strong); flex: none; }
+.pulse.on { background: var(--amber-fill); box-shadow: 0 0 0 0 rgba(242,165,22,0.6); animation: pulse 1.6s infinite; }
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(242,165,22,0.55); } 80%, 100% { box-shadow: 0 0 0 12px rgba(242,165,22,0); } }
+
+/* explore */
+.tables { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; }
+.tcard { text-align: left; cursor: pointer; border: 1px solid var(--rule); background: var(--panel); border-radius: var(--r-outer);
+  padding: 14px 16px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 4px; }
+.tcard[aria-pressed="true"] { border-color: var(--amber-fill); box-shadow: var(--glow), var(--shadow); }
+.tcard b { font-family: var(--display); font-size: 19px; font-weight: 700; }
+.tcard .k { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+.tcard .n { font-family: var(--display); font-size: 22px; font-weight: 600; }
+.tcard .n small { font-family: var(--body); font-size: 12px; font-weight: 400; color: var(--muted); margin-left: 4px; }
+.tcard .about { font-size: 13px; color: var(--ink-2); }
+.form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; align-items: end; }
+.frow { display: flex; gap: 8px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
+.cli { font-family: var(--mono); font-size: 12.5px; background: var(--bg-2); border: 1px solid var(--rule); border-radius: var(--r-inner);
+  padding: 12px; white-space: pre-wrap; overflow-wrap: anywhere; margin: 14px 0 0; color: var(--ink-2); }
+.cli::first-line { color: var(--muted); }
+.split { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 18px; margin-top: 18px; }
+pre.item { font-family: var(--mono); font-size: 12.5px; background: var(--bg-2); border: 1px solid var(--rule); border-radius: var(--r-inner);
+  padding: 12px; margin: 0; max-height: 540px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+@media (max-width: 960px) { .two, .split, .summary { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 640px) { .view-h h1 { font-size: 32px; } .titlebar input.label { font-size: 26px; } }
+</style>
+</head>
+<body>
+<header class="appbar"><div class="in">
+  <div class="brand" aria-label="PicoCar telemetry">
+    <svg viewBox="0 0 34 34" aria-hidden="true"><rect x="1" y="1" width="32" height="32" rx="9" fill="var(--ink)"/><path d="M5 25l6-7 5 4 6-10 7 6" fill="none" stroke="var(--amber-fill)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <span class="name">PicoCar</span><span class="sub">telemetry</span>
+  </div>
+  <nav class="seg" aria-label="Views">
+    <button data-view="live" aria-current="page">Live</button>
+    <button data-view="runs">Runs</button>
+    <button data-view="explore">Explore tables</button>
+  </nav>
+  <span class="spacer"></span>
+  <div class="pills" aria-live="polite">
+    <span class="pill"><span class="led" id="dBroker"></span><span id="tBroker">Broker</span></span>
+    <span class="pill"><span class="led" id="dCar"></span><span id="tCar">Car</span></span>
+    <span class="pill" id="tDb">Database</span>
+  </div>
+</div></header>
+
+<div class="wrap">
+  <!-- LIVE -->
+  <div id="v-live" class="view">
+    <div class="view-h"><div class="live-head"><span class="pulse" id="pulse"></span><h1 id="liveTitle">Waiting for the car</h1></div></div>
+    <div class="stack">
+      <section class="card"><dl class="tiles" id="liveStats"></dl></section>
+      <section class="card">
+        <h2>Last 60 seconds</h2>
+        <div id="liveCharts" class="charts"><p class="empty">No telemetry in the last minute. Start the car and its broker; records appear here as they arrive.</p></div>
+      </section>
+      <section class="card"><h2>Latest events</h2><div id="liveEvents"></div></section>
+    </div>
+  </div>
+
+  <!-- RUNS -->
+  <div id="v-runs" class="view" hidden>
+    <div id="runsList">
+      <div class="view-h"><h1>Runs</h1><p id="runsLead"></p></div>
+      <div class="summary">
+        <section class="card">
+          <h2 class="card-h">Course attempts <small>every run from Go to finish, fault or reset</small></h2>
+          <div class="big" id="sumAttempts">0</div>
+          <div class="outbar" id="outbar" role="img" aria-label="Outcomes of course attempts"></div>
+          <div class="outkey" id="outkey"></div>
+        </section>
+        <section class="card">
+          <dl class="tiles" id="sumTiles"></dl>
+        </section>
+      </div>
+      <section class="card">
+        <div class="filters">
+          <label class="field">Show
+            <select id="fKind"><option value="course">Course attempts</option><option value="all">Everything</option><option value="standby">Standby only</option></select></label>
+          <label class="field">Outcome
+            <select id="fOutcome"><option value="">Any</option><option value="finished">Finished</option><option value="fault">Fault</option><option value="other">Other</option></select></label>
+          <label class="field" style="flex:1;min-width:200px">Search
+            <input type="text" id="fText" placeholder="Label, run ID, barcode letter, notes"></label>
+          <span class="muted" id="runsCount"></span>
+        </div>
+        <div class="tablewrap" style="max-height:70vh"><table id="runsTable"></table></div>
+      </section>
+    </div>
+    <div id="runDetail" hidden></div>
+  </div>
+
+  <!-- EXPLORE -->
+  <div id="v-explore" class="view" hidden>
+    <div class="view-h"><h1>Explore tables</h1><p id="dbInfo"></p></div>
+    <div class="tables" id="tableCards"></div>
+    <section class="card" style="margin-top:18px">
+      <form id="qForm" autocomplete="off">
+        <div class="form-grid">
+          <label class="field">Operation
+            <select id="qOp"><option value="query">Query</option><option value="scan">Scan</option></select></label>
+          <label class="field">Index
+            <select id="qIndex"></select></label>
+          <label class="field" id="pkWrap"><span id="pkLabel">Partition key</span>
+            <input type="text" id="qPk" list="runIds" placeholder="run_id"></label>
+          <label class="field" id="skWrap"><span id="skLabel">Sort key</span>
+            <select id="qSkOp"><option value="">Any</option><option value="=">=</option><option value="<">&lt;</option><option value="<=">&lt;=</option><option value=">">&gt;</option><option value=">=">&gt;=</option><option value="between">between</option><option value="begins_with">begins with</option></select></label>
+          <label class="field" id="skV1Wrap">Sort key value<input type="text" id="qSk1"></label>
+          <label class="field" id="skV2Wrap" hidden>and<input type="text" id="qSk2"></label>
+          <label class="field">Limit<input type="number" id="qLimit" value="100" min="1" max="5000"></label>
+          <label class="field">Order
+            <select id="qOrder"><option value="asc">Oldest first</option><option value="desc">Newest first</option></select></label>
+        </div>
+        <datalist id="runIds"></datalist>
+        <div id="filters"></div>
+        <div class="frow">
+          <button type="button" class="btn small quiet" id="addFilter">Add filter</button>
+          <span class="spacer"></span>
+          <button type="submit" class="btn next">Run query</button>
+        </div>
+        <div class="cli" id="cli" aria-label="Equivalent AWS CLI command"></div>
+      </form>
+    </section>
+    <div class="split">
+      <section class="card">
+        <div class="frow" style="margin-top:0"><h2 style="margin:0">Results</h2><span class="muted" id="qMeta"></span><span class="spacer"></span>
+          <button class="btn small" id="qNext" hidden>Next page</button></div>
+        <div id="qResults" style="margin-top:12px"><p class="empty">Pick a table, enter a run ID (or switch to Scan), then Run query.</p></div>
+      </section>
+      <section class="card">
+        <h2>Item</h2>
+        <pre class="item" id="qItem">Select a row to see the whole item.</pre>
+      </section>
+    </div>
+  </div>
+</div>
+<div class="tip" id="tip" role="tooltip"></div>
+
+<script>
+"use strict";
+/* ---------- helpers ---------- */
+const $ = (id) => document.getElementById(id);
+function h(tag, attrs, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v == null || v === false) continue;
+    if (k === "class") el.className = v;
+    else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else el.setAttribute(k, v === true ? "" : v);
+  }
+  for (const kid of kids.flat()) if (kid != null && kid !== false) el.append(kid instanceof Node ? kid : String(kid));
+  return el;
+}
+const NS = "http://www.w3.org/2000/svg";
+function s(tag, attrs) { const el = document.createElementNS(NS, tag); for (const [k, v] of Object.entries(attrs || {})) el.setAttribute(k, v); return el; }
+async function api(path, body) {
+  const opt = body ? { method: "POST", headers: { "Content-Type": "application/json", "X-Telemetry-UI": "1" }, body: JSON.stringify(body) } : {};
+  const r = await fetch(path, opt);
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || r.statusText);
+  return data;
+}
+const store = { get(k, d) { try { return localStorage.getItem(k) ?? d; } catch { return d; } }, set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
+const fmtTime = (ts) => ts ? new Date(ts).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "-";
+const clock = (ts) => new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+function dur(sec) { if (sec == null) return "-"; sec = Math.round(sec); const m = Math.floor(sec / 60); return m ? `${m} min ${sec % 60} s` : `${sec} s`; }
+function bytes(n) { return n > 1e6 ? (n / 1e6).toFixed(1) + " MB" : n > 1e3 ? (n / 1e3).toFixed(0) + " kB" : n + " B"; }
+const MISSION = ["Start-up", "Calibrate", "Ready", "Following", "Barcode", "Junction", "Hump", "Obstacle", "Searching", "Finished", "Fault"];
+function outcomeClass(o) { if (!o) return "other"; if (o === "finished") return "finished"; if (o.startsWith("fault")) return "fault"; if (o === "open") return "open"; return "other"; }
+function outcomeText(o) { return o === "open" ? "Recording" : o ? o[0].toUpperCase() + o.slice(1).replace(/_/g, " ") : "-"; }
+const badge = (o) => h("span", { class: "badge " + outcomeClass(o) }, outcomeText(o));
+function tile(k, v, u, wide) { return h("div", { class: "tile" + (wide ? " wide" : "") }, h("dt", {}, k), h("dd", {}, v ?? "-", u ? h("small", {}, u) : null)); }
+
+/* ---------- views ---------- */
+let view = "live";
+function show(v) {
+  view = v;
+  document.querySelectorAll("nav button").forEach((b) => b.setAttribute("aria-current", b.dataset.view === v ? "page" : "false"));
+  document.querySelectorAll(".view").forEach((el) => { el.hidden = el.id !== "v-" + v; });
+  store.set("tele.view", v);
+  if (v === "runs") loadRuns();
+  if (v === "explore") loadTables();
+}
+document.querySelectorAll("nav button").forEach((b) => b.addEventListener("click", () => { closeRun(); show(b.dataset.view); }));
+
+/* ---------- charts: small multiples, shared x, synced crosshair ---------- */
+const tip = $("tip");
+function chartGroup(container, data) {
+  container.textContent = "";
+  if (!data.t.length) { container.append(h("p", { class: "empty" }, "No telemetry in this run.")); return; }
+  const W = Math.max(320, container.clientWidth), PADL = 46, PADR = 10, H = 124;
+  const t0 = data.t[0], t1 = data.t[data.t.length - 1] || t0 + 1;
+  const x = (t) => PADL + (t - t0) / Math.max(1e-6, t1 - t0) * (W - PADL - PADR);
+  const crosses = [];
+  const nice = (span) => { const raw = span / 5, p = Math.pow(10, Math.floor(Math.log10(raw))); return [1, 2, 5, 10].map((m) => m * p).find((v) => v >= raw); };
+
+  const band = s("svg", { class: "chart", viewBox: `0 0 ${W} 28`, height: 28, role: "img", "aria-label": "Car state over time" });
+  let start = 0, alt = false;
+  for (let i = 1; i <= data.states.length; i++) {
+    if (i === data.states.length || data.states[i] !== data.states[start]) {
+      const st = data.states[start], x0 = x(data.t[start]), x1 = x(data.t[Math.min(i, data.t.length - 1)]);
+      const fault = st === 10;
+      band.append(s("rect", { x: x0, y: 2, width: Math.max(1, x1 - x0 - 2), height: 24, rx: 6,
+        fill: fault ? "var(--stop)" : alt ? "var(--band-b)" : "var(--band-a)" }));
+      if (x1 - x0 > 58) { const tx = s("text", { x: x0 + 8, y: 18 }); tx.textContent = MISSION[st] || "S" + st; if (fault) tx.setAttribute("style", "fill:#fff"); else tx.setAttribute("style", "fill:var(--ink-2)"); band.append(tx); }
+      alt = !alt; start = i;
+    }
+  }
+  container.append(h("div", { class: "panel" }, h("div", { class: "panel-head" }, h("b", {}, "State")), band));
+  const bandCross = s("line", { class: "cross", y1: 0, y2: 28, visibility: "hidden" }); band.append(bandCross); crosses.push(bandCross);
+
+  data.panels.forEach((p) => {
+    let lo = Infinity, hi = -Infinity;
+    p.series.forEach((sr) => sr.values.forEach((v) => { if (v != null) { lo = Math.min(lo, v); hi = Math.max(hi, v); } }));
+    if (p.domain) { lo = Math.min(lo, p.domain[0]); hi = Math.max(hi, p.domain[1]); }
+    if (p.zero) { lo = Math.min(lo, 0); hi = Math.max(hi, 0); }
+    if (!(hi > lo)) { lo -= 1; hi += 1; }
+    const step = nice(hi - lo); lo = Math.floor(lo / step) * step; hi = Math.ceil(hi / step) * step;
+    const y = (v) => 6 + (hi - v) / (hi - lo) * (H - 22);
+    const svg = s("svg", { class: "chart", viewBox: `0 0 ${W} ${H}`, height: H, role: "img", "aria-label": p.title });
+    for (let v = lo; v <= hi + 1e-9; v += step) {
+      svg.append(s("line", { class: v === 0 && p.zero ? "zero" : "grid", x1: PADL, x2: W - PADR, y1: y(v), y2: y(v) }));
+      const lab = s("text", { x: PADL - 6, y: y(v) + 4, "text-anchor": "end" }); lab.textContent = Math.round(v * 10) / 10; svg.append(lab);
+    }
+    p.series.forEach((sr) => {
+      let d = "", pen = false;
+      // A gap in the records (lost Wi-Fi) breaks the line: drawing
+      // straight across it would invent data.
+      sr.values.forEach((v, i) => { if (v == null) { pen = false; return; } if (i && data.t[i] - data.t[i - 1] > 1) pen = false; d += (pen ? "L" : "M") + x(data.t[i]).toFixed(1) + " " + y(v).toFixed(1); pen = true; });
+      svg.append(s("path", { d, fill: "none", stroke: sr.color, "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }));
+      // A record with gaps on both sides has no line: show it as a dot.
+      const gap = (i) => i <= 0 || i >= data.t.length || data.t[i] - data.t[i - 1] > 1 || sr.values[i] == null || sr.values[i - 1] == null;
+      sr.values.forEach((v, i) => { if (v != null && gap(i) && gap(i + 1)) svg.append(s("circle", { cx: x(data.t[i]), cy: y(v), r: 2.5, fill: sr.color })); });
+    });
+    const cross = s("line", { class: "cross", y1: 4, y2: H - 16, visibility: "hidden" }); svg.append(cross); crosses.push(cross);
+    const head = h("div", { class: "panel-head" }, h("b", {}, p.title), h("span", { class: "muted" }, p.unit));
+    if (p.series.length > 1) p.series.forEach((sr) => head.append(h("span", { class: "key" }, h("i", { style: `background:${sr.color}` }), sr.name)));
+    container.append(h("div", { class: "panel" }, head, svg));
+  });
+  const axis = s("svg", { class: "chart", viewBox: `0 0 ${W} 18`, height: 18 });
+  const tstep = nice(t1 - t0);
+  for (let t = Math.ceil(t0 / tstep) * tstep; t <= t1; t += tstep) {
+    const tx = s("text", { x: x(t), y: 13, "text-anchor": "middle" }); tx.textContent = Math.round(t) + " s"; axis.append(tx);
+  }
+  container.append(axis);
+
+  const hide = () => { tip.style.display = "none"; crosses.forEach((c) => c.setAttribute("visibility", "hidden")); };
+  container.onpointermove = (e) => {
+    const r = container.getBoundingClientRect();
+    const px = (e.clientX - r.left) / r.width * W;
+    if (px < PADL || px > W - PADR) { hide(); return; }
+    const tt = t0 + (px - PADL) / (W - PADL - PADR) * (t1 - t0);
+    let lo = 0, hi = data.t.length - 1;
+    while (hi - lo > 1) { const m = (lo + hi) >> 1; if (data.t[m] < tt) lo = m; else hi = m; }
+    const i = Math.abs(data.t[lo] - tt) < Math.abs(data.t[hi] - tt) ? lo : hi;
+    const cx = x(data.t[i]);
+    crosses.forEach((c) => { c.setAttribute("x1", cx); c.setAttribute("x2", cx); c.setAttribute("visibility", "visible"); });
+    tip.textContent = "";
+    tip.append(h("div", { class: "t" }, `${data.t[i].toFixed(1)} s  ${clock(data.ts[i])}`), h("div", { class: "row" }, h("strong", {}, MISSION[data.states[i]] || "?"), h("span", { class: "muted" }, "state")));
+    data.panels.forEach((p) => p.series.forEach((sr) => tip.append(h("div", { class: "row" }, h("strong", {}, sr.values[i] ?? "-"), h("i", { style: `background:${sr.color}` }), h("span", { class: "muted" }, `${sr.name} ${p.unit}`)))));
+    tip.style.display = "block";
+    const left = e.clientX + 16 + tip.offsetWidth > window.innerWidth ? e.clientX - tip.offsetWidth - 16 : e.clientX + 16;
+    tip.style.left = left + window.scrollX + "px"; tip.style.top = e.clientY + window.scrollY + 12 + "px";
+  };
+  container.onpointerleave = hide;
+}
+function seriesFromCols(c) {
+  const t0 = c.ts.length ? c.ts[0] : 0;
+  return {
+    t: c.ts.map((v) => (v - t0) / 1000), ts: c.ts, states: c.mission_state,
+    panels: [
+      { title: "Wheel speed", unit: "mm/s", zero: true, series: [
+        { name: "Left", color: "var(--s1)", values: c.speed_left_mms }, { name: "Right", color: "var(--s2)", values: c.speed_right_mms }] },
+      { title: "Line error", unit: "+ = line to the left", zero: true, domain: [-40, 40], series: [{ name: "Error", color: "var(--s1)", values: c.line_error }] },
+      { title: "Turn rate", unit: "deg/s", zero: true, series: [{ name: "Turn", color: "var(--s1)", values: c.turn_rate_dps }] },
+    ],
+  };
+}
+function colsFromRecs(recs) {
+  const keys = ["ts", "speed_left_mms", "speed_right_mms", "line_error", "turn_rate_dps", "mission_state"];
+  const c = {}; keys.forEach((k) => { c[k] = recs.map((r) => r[k]); }); return c;
+}
+
+/* ---------- events table ---------- */
+function evText(e) {
+  const skip = new Set(["run_id", "ts_seq", "ts", "time", "type", "text"]);
+  const parts = Object.entries(e).filter(([k]) => !skip.has(k)).map(([k, v]) => `${k.replace(/_/g, " ")}: ${Array.isArray(v) ? v.join(", ") : v}`);
+  if (e.text && !parts.length) parts.push(e.text.replace(/^\[\s*[\d.]+\]\s*/, ""));
+  return parts.join("   ");
+}
+function evClass(e) { return /fault_set|impact|problem|line_lost/.test(e.type) || (e.type === "run_end" && /fault/.test(e.outcome)) ? "ev-fault" : e.type === "barcode" ? "ev-barcode" : ""; }
+function eventsTable(events, t0) {
+  if (!events.length) return h("p", { class: "empty" }, "No events yet.");
+  return h("div", { class: "tablewrap", style: "max-height:440px" }, h("table", {},
+    h("thead", {}, h("tr", {}, h("th", {}, "Time"), t0 != null ? h("th", { class: "n" }, "Run time") : null, h("th", {}, "Event"), h("th", {}, "Details"))),
+    h("tbody", {}, events.map((e) => h("tr", {},
+      h("td", {}, clock(e.ts)), t0 != null ? h("td", { class: "n" }, ((e.ts - t0) / 1000).toFixed(1) + " s") : null,
+      h("td", { class: evClass(e) }, e.type.replace(/_/g, " ")), h("td", { style: "white-space:normal" }, evText(e)))))));
+}
+
+/* ---------- LIVE ---------- */
+let liveTimer = null;
+function setLed(id, cls) { $(id).className = "led " + cls; }
+async function pollLive() {
+  try {
+    const d = await api("/api/live");
+    setLed("dBroker", d.broker ? "on" : d.collecting ? "bad" : "");
+    $("tBroker").textContent = !d.collecting ? "Browse only" : d.broker ? "Collecting" : "Broker not connected";
+    const age = d.stats.last_telemetry ? (d.now - d.stats.last_telemetry) / 1000 : null;
+    setLed("dCar", age != null && age < 3 ? "on" : age != null ? "bad" : "");
+    $("tCar").textContent = age == null ? "No telemetry yet" : age < 3 ? "Car sending" : `Car silent ${Math.round(age)} s`;
+    $("pulse").className = "pulse" + (age != null && age < 3 ? " on" : "");
+    if (view !== "live") return;
+    const run = d.run;
+    $("liveTitle").textContent = !run ? "Waiting for the car" : run.kind === "course" ? "Recording a course attempt" : "Car on standby";
+    const st = $("liveStats"); st.textContent = "";
+    if (run) {
+      st.append(tile("Since", clock(run.started)), tile("Duration", dur(run.duration_s)), tile("State", (run.last_state || "-").replace(/^S\d+ /, "").toLowerCase()),
+        tile("Distance", run.distance_mm, "mm"), tile("Mean speed", run.speed_mean_mms, "mm/s"), tile("Line error RMS", run.line_err_rms),
+        tile("Records", run.records, run.records_lost ? `${run.records_lost} lost` : ""), tile("Barcodes", run.barcodes.length ? run.barcodes.join(" ") : "none"),
+        tile("Faults seen", run.faults_seen.length ? run.faults_seen.join(", ").toLowerCase().replace(/_/g, " ") : "none", null, true));
+    }
+    st.append(tile("Collected this session", d.stats.telemetry, "records"), tile("Log lines", d.stats.logs));
+    if (d.recent && d.recent.length > 1) chartGroup($("liveCharts"), seriesFromCols(colsFromRecs(d.recent)));
+    const le = $("liveEvents"); le.textContent = ""; le.append(eventsTable(d.events || [], null));
+  } catch (err) {
+    setLed("dBroker", "bad"); $("tBroker").textContent = "Telemetry server not running";
+  }
+}
+function startLive() { clearInterval(liveTimer); pollLive(); liveTimer = setInterval(pollLive, 1000); }
+
+/* ---------- RUNS ---------- */
+let runs = [], sortKey = store.get("tele.sort", "started"), sortDir = -1;
+async function loadRuns() {
+  try { runs = (await api("/api/runs")).Items; } catch (e) { $("runsTable").textContent = ""; $("runsTable").append(h("caption", { class: "err" }, e.message)); return; }
+  drawSummary(); drawRuns();
+  const dl = $("runIds"); dl.textContent = ""; runs.slice(0, 300).forEach((r) => dl.append(h("option", { value: r.run_id })));
+}
+function drawSummary() {
+  const c = runs.filter((r) => r.kind === "course");
+  const n = { finished: 0, fault: 0, other: 0, open: 0 };
+  c.forEach((r) => { n[outcomeClass(r.outcome)]++; });
+  $("sumAttempts").innerHTML = ""; $("sumAttempts").append(String(c.length), h("small", {}, c.length ? `${Math.round(100 * n.finished / c.length)} % finished` : ""));
+  const bar = $("outbar"); bar.textContent = "";
+  const parts = [["finished", "Finished", "var(--ok)"], ["fault", "Fault", "var(--stop)"], ["other", "Reset or offline", "var(--warn)"], ["open", "Recording", "var(--amber-fill)"]];
+  parts.forEach(([k, , col]) => { if (n[k]) bar.append(h("span", { style: `flex:${n[k]};background:${col}`, title: `${k}: ${n[k]}` })); });
+  const key = $("outkey"); key.textContent = "";
+  parts.forEach(([k, name, col]) => { if (n[k]) key.append(h("span", {}, h("i", { style: `background:${col}` }), `${name} ${n[k]}`)); });
+  const best = c.filter((r) => r.outcome === "finished").sort((a, b) => a.duration_s - b.duration_s)[0];
+  const far = c.reduce((m, r) => Math.max(m, r.distance_mm), 0);
+  const letters = c.reduce((m, r) => m + r.barcodes.length, 0), rej = c.reduce((m, r) => m + r.barcode_rejects, 0);
+  const tiles = $("sumTiles"); tiles.textContent = "";
+  tiles.append(tile("Fastest finish", best ? dur(best.duration_s) : "-"), tile("Longest drive", far, "mm"),
+    tile("Barcodes read", letters, rej ? `${rej} rejected` : ""), tile("Driving time", dur(c.reduce((m, r) => m + r.duration_s, 0))));
+  $("runsLead").textContent = runs.length ? `${runs.length} segments recorded since ${fmtTime(Math.min(...runs.map((r) => r.started)))}` : "";
+}
+const RUN_COLS = [
+  ["started", "Started", (r) => fmtTime(r.started)],
+  ["label", "Run", (r) => r.label ? h("b", {}, r.label) : h("span", { class: "idcell" }, r.run_id)],
+  ["outcome", "Outcome", (r) => badge(r.outcome)],
+  ["duration_s", "Duration", (r) => dur(r.duration_s), true],
+  ["distance_mm", "Distance mm", (r) => r.distance_mm, true],
+  ["speed_mean_mms", "Mean mm/s", (r) => r.speed_mean_mms, true],
+  ["line_err_rms", "Line err RMS", (r) => r.line_err_rms, true],
+  ["barcodes", "Barcodes", (r) => h("span", { class: "letters" }, r.barcodes.join(" ") || "-")],
+  ["line_lost", "Line lost", (r) => r.line_lost, true],
+  ["records", "Records", (r) => r.records, true],
+  ["records_lost", "Lost", (r) => r.records ? Math.round(100 * r.records_lost / (r.records + r.records_lost)) + " %" : "-", true],
+  ["kind", "Kind", (r) => r.kind],
+];
+function drawRuns() {
+  const kind = $("fKind").value, oc = $("fOutcome").value, q = $("fText").value.trim().toLowerCase();
+  const list = runs.filter((r) => (kind === "all" || r.kind === kind) && (!oc || outcomeClass(r.outcome) === oc) &&
+    (!q || (r.label + " " + r.run_id + " " + r.barcodes.join("") + " " + r.notes).toLowerCase().includes(q)));
+  list.sort((a, b) => { const va = a[sortKey], vb = b[sortKey]; const c = Array.isArray(va) ? va.length - vb.length : va > vb ? 1 : va < vb ? -1 : 0; return c * sortDir; });
+  $("runsCount").textContent = `${list.length} of ${runs.length}`;
+  const t = $("runsTable"); t.textContent = "";
+  t.append(h("thead", {}, h("tr", {}, RUN_COLS.map(([k, n, , num]) => h("th", { class: num ? "n" : "", "aria-sort": k === sortKey ? (sortDir > 0 ? "ascending" : "descending") : null },
+    h("button", { onclick: () => { sortDir = k === sortKey ? -sortDir : -1; sortKey = k; store.set("tele.sort", k); drawRuns(); } }, n + (k === sortKey ? (sortDir > 0 ? " ▲" : " ▼") : "")))))));
+  const body = h("tbody");
+  if (!list.length) body.append(h("tr", {}, h("td", { colspan: RUN_COLS.length, class: "empty" }, runs.length ? "No runs match these filters." : "No runs yet. Drive the car, or import saved logs with --import.")));
+  list.slice(0, 500).forEach((r) => body.append(h("tr", { class: "click", tabindex: 0, onclick: () => openRun(r.run_id), onkeydown: (e) => { if (e.key === "Enter") openRun(r.run_id); } },
+    RUN_COLS.map(([k, , f, num]) => h("td", { class: num ? "n" : "" }, f(r))))));
+  t.append(body);
+}
+["fKind", "fOutcome"].forEach((id) => $(id).addEventListener("change", drawRuns));
+$("fText").addEventListener("input", drawRuns);
+
+async function openRun(id) {
+  show("runs");
+  $("runsList").hidden = true;
+  const box = $("runDetail"); box.hidden = false; box.textContent = ""; box.append(h("p", { class: "empty" }, "Loading..."));
+  let d;
+  try { d = await api("/api/run?id=" + encodeURIComponent(id)); } catch (e) { box.textContent = ""; box.append(h("p", { class: "err" }, e.message)); return; }
+  history.replaceState(null, "", "#run=" + encodeURIComponent(id));
+  const r = d.run; box.textContent = "";
+  const msg = h("span", { class: "muted" });
+  const alertLine = (t) => { msg.textContent = t; };
+  const saveAttr = async (attrs) => { try { await api("/api/update", { TableName: "PicoCarRuns", Key: { run_id: r.run_id }, Attributes: attrs }); Object.assign(r, attrs); const i = runs.findIndex((x) => x.run_id === r.run_id); if (i >= 0) Object.assign(runs[i], attrs); alertLine("Saved"); } catch (e) { alertLine(e.message); } };
+  const label = h("input", { class: "label", type: "text", value: r.label || "", placeholder: r.kind === "course" ? "Name this run" : "Standby", "aria-label": "Run label" });
+  label.addEventListener("change", () => saveAttr({ label: label.value.trim() }));
+  label.addEventListener("keydown", (e) => { if (e.key === "Enter") label.blur(); });
+  box.append(h("div", { class: "titlebar" }, h("button", { class: "btn small quiet", onclick: closeRun }, "All runs"), label, badge(r.outcome), msg));
+  box.append(h("p", { class: "meta" }, `${r.kind === "course" ? "Course attempt" : "Standby"} ${r.run_id}, ${fmtTime(r.started)} to ${r.ended ? clock(r.ended) : "now"}${r.source === "import" ? ", imported from saved logs" : ""}`));
+
+  const stats = h("dl", { class: "tiles" });
+  stats.append(tile("Duration", dur(r.duration_s)), tile("Distance", r.distance_mm, "mm"), tile("Mean speed", r.speed_mean_mms, "mm/s"), tile("Top wheel speed", r.speed_max_mms, "mm/s"),
+    tile("Line error RMS", r.line_err_rms), tile("Line error max", r.line_err_abs_max), tile("Turn rate max", r.turn_rate_abs_max_dps, "deg/s"),
+    tile("Line lost", r.line_lost, "times"), tile("Searches", r.searches), tile("Barcodes read", r.barcodes.length ? r.barcodes.join(" ") : "none"),
+    tile("Barcode rejects", r.barcode_rejects), tile("Obstacles", r.obstacles), tile("Hump peak", r.hump_max_mm, "mm"), tile("Commands", r.commands),
+    tile("Records", r.records, `${r.records_lost} lost`), tile("Telemetry gaps", r.telemetry_gaps), tile("Log lines", r.log_lines),
+    tile("Faults seen", r.faults_seen.length ? r.faults_seen.join(", ").toLowerCase().replace(/_/g, " ") : "none", null, true));
+  const times = Object.entries(r.state_time_s || {}).sort((a, b) => b[1] - a[1]);
+  box.append(h("section", { class: "card" }, stats, times.length ? h("div", { class: "statetimes", "aria-label": "Time in each state" },
+    times.map(([k, v]) => h("span", {}, k.replace(/^S\d+ /, "").toLowerCase(), h("b", {}, dur(v))))) : null));
+
+  const charts = h("div", { class: "charts" });
+  const sec = h("section", { class: "card", style: "margin-top:18px" }, h("div", { class: "frow", style: "margin:0 0 12px" }, h("h2", { style: "margin:0" }, "Telemetry"),
+    h("span", { class: "muted" }, d.series.step > 1 ? `${d.series.n} records, every ${d.series.step}th shown (line-error peaks kept)` : `${d.series.n} records`),
+    h("span", { class: "spacer" }), h("button", { class: "btn small quiet", onclick: () => toggleTable() }, "Show as table")), charts);
+  const tableBox = h("div", { hidden: true, style: "margin-top:12px" });
+  sec.append(tableBox);
+  box.append(sec);
+  const sdata = seriesFromCols(d.series.cols);
+  requestAnimationFrame(() => chartGroup(charts, sdata));
+  new ResizeObserver(() => chartGroup(charts, sdata)).observe(sec);
+  function toggleTable() {
+    tableBox.hidden = !tableBox.hidden;
+    if (!tableBox.hidden && !tableBox.firstChild) {
+      const c = d.series.cols;
+      tableBox.append(h("div", { class: "tablewrap", style: "max-height:360px" }, h("table", {},
+        h("thead", {}, h("tr", {}, ["Run time", "State", "Left mm/s", "Right mm/s", "Line error", "Turn deg/s", "Distance mm"].map((n) => h("th", {}, n)))),
+        h("tbody", {}, sdata.t.map((t, i) => h("tr", {}, h("td", {}, t.toFixed(1) + " s"), h("td", {}, MISSION[c.mission_state[i]]), h("td", { class: "n" }, c.speed_left_mms[i]),
+          h("td", { class: "n" }, c.speed_right_mms[i]), h("td", { class: "n" }, c.line_error[i]), h("td", { class: "n" }, c.turn_rate_dps[i]), h("td", { class: "n" }, c.distance_mm[i])))))));
+    }
+  }
+
+  const counts = {}; d.events.forEach((e) => { counts[e.type] = (counts[e.type] || 0) + 1; });
+  let evType = "";
+  const evBox = h("div");
+  const chips = h("div", { class: "chips", style: "margin-bottom:12px" });
+  const drawEv = () => { evBox.textContent = ""; evBox.append(eventsTable(d.events.filter((e) => !evType || e.type === evType), r.started));
+    chips.querySelectorAll(".chip").forEach((c) => c.setAttribute("aria-pressed", String(c.dataset.t === evType))); };
+  chips.append(h("button", { class: "chip", "data-t": "", onclick: () => { evType = ""; drawEv(); } }, `All ${d.events.length}`));
+  Object.entries(counts).sort((a, b) => b[1] - a[1]).forEach(([t, n]) => chips.append(h("button", { class: "chip", "data-t": t, onclick: () => { evType = t; drawEv(); } }, `${t.replace(/_/g, " ")} ${n}`)));
+  drawEv();
+
+  const logSearch = h("input", { type: "text", placeholder: "Search the log", "aria-label": "Search the log", style: "flex:1" });
+  const logBox = h("div", { class: "log loglist" });
+  const drawLogs = () => { const q = logSearch.value.toLowerCase(); logBox.textContent = "";
+    const list = d.logs.filter((l) => !q || l.text.toLowerCase().includes(q));
+    list.slice(-2000).forEach((l) => logBox.append(h("p", { class: l.source === "console" ? "console" : "" }, h("span", { class: "t" }, clock(l.ts) + "  "), l.text)));
+    if (!list.length) logBox.append(h("p", { class: "t" }, d.logs.length ? "No lines match." : "No log lines in this run.")); };
+  logSearch.addEventListener("input", drawLogs); drawLogs();
+
+  box.append(h("div", { class: "two", style: "margin-top:18px" },
+    h("section", { class: "card" }, h("h2", {}, "Events"), chips, evBox),
+    h("section", { class: "card" }, h("h2", {}, "Car log"), h("div", { class: "frow", style: "margin:0 0 12px" }, logSearch), logBox,
+      d.logs_more ? h("p", { class: "muted" }, "First 5000 lines shown; export the log for all of them.") : null)));
+
+  const notes = h("textarea", { "aria-label": "Notes", placeholder: "What changed for this run, what you saw" }); notes.value = r.notes || "";
+  notes.addEventListener("change", () => saveAttr({ notes: notes.value }));
+  const exp = (table, fmt) => h("a", { class: "btn small quiet", href: `/api/export?run=${encodeURIComponent(r.run_id)}&table=${table}&fmt=${fmt}`, download: "" },
+    { PicoCarTelemetry: "Telemetry", PicoCarEvents: "Events", PicoCarLogs: "Car log" }[table] + (fmt === "json" ? " JSON" : " CSV"));
+  const confirm = h("div", { class: "confirm" },
+    h("p", { style: "margin:0 0 10px" }, `Delete ${r.label || r.run_id}? This removes its ${r.records} telemetry records, ${r.events} events and ${r.log_lines} log lines from the database. The saved console logs in logs/ are not touched.`),
+    h("button", { class: "btn danger solid", onclick: async () => { try { await api("/api/delete-run", { run_id: r.run_id }); runs = runs.filter((x) => x.run_id !== r.run_id); closeRun(); } catch (e) { alertLine(e.message); } } }, `Delete ${r.label || r.run_id}`),
+    " ", h("button", { class: "btn quiet", onclick: () => confirm.classList.remove("show") }, "Keep it"));
+  box.append(h("div", { class: "two", style: "margin-top:18px" },
+    h("section", { class: "card" }, h("h2", {}, "Notes"), notes, h("p", { class: "muted", style: "margin:6px 0 0;font-size:13px" }, "Saved when you click away.")),
+    h("section", { class: "card" }, h("h2", {}, "Export and delete"), h("div", { class: "chips" }, exp("PicoCarTelemetry", "csv"), exp("PicoCarEvents", "csv"), exp("PicoCarLogs", "csv"), exp("PicoCarTelemetry", "json")),
+      h("p", { style: "margin:14px 0 0" }, h("button", { class: "btn danger small", onclick: () => confirm.classList.add("show") }, "Delete run")), confirm)));
+}
+function closeRun() {
+  $("runDetail").hidden = true; $("runsList").hidden = false;
+  if (location.hash) history.replaceState(null, "", location.pathname);
+  if (view === "runs" && runs.length) { drawSummary(); drawRuns(); }
+}
+
+/* ---------- EXPLORE ---------- */
+let tables = [], cur = null, lastKey = null;
+async function loadTables() {
+  const d = await api("/api/tables");
+  tables = d.Tables;
+  $("tDb").textContent = bytes(d.db_bytes); $("dbInfo").textContent = `Same table and key design as DynamoDB, so these tables move to AWS unchanged. Stored in ${d.db}.`;
+  const box = $("tableCards"); box.textContent = "";
+  tables.forEach((t) => box.append(h("button", { class: "tcard", "aria-pressed": String(!!cur && cur.TableName === t.TableName), "data-t": t.TableName, onclick: () => pick(t.TableName) },
+    h("b", {}, t.TableName), h("span", { class: "k" }, t.KeySchema.map((k) => `${k.AttributeName} (${k.KeyType === "HASH" ? "partition" : "sort"})`).join(", ") +
+      (t.GlobalSecondaryIndexes.length ? `, index ${t.GlobalSecondaryIndexes.map((g) => g.IndexName).join(", ")}` : "")),
+    h("span", { class: "n" }, t.ItemCount.toLocaleString(), h("small", {}, `items, ${bytes(t.TableSizeBytes)}`)),
+    h("span", { class: "about" }, t.About))));
+  if (!cur) pick(store.get("tele.table", "PicoCarEvents")); else syncForm();
+  if (!runs.length) loadRuns();
+}
+function pick(name) {
+  cur = tables.find((t) => t.TableName === name) || tables[0];
+  store.set("tele.table", cur.TableName);
+  document.querySelectorAll(".tcard").forEach((c) => c.setAttribute("aria-pressed", String(c.dataset.t === cur.TableName)));
+  const idx = $("qIndex"); idx.textContent = ""; idx.append(h("option", { value: "" }, "Table (primary key)"));
+  cur.GlobalSecondaryIndexes.forEach((g) => idx.append(h("option", { value: g.IndexName }, g.IndexName)));
+  syncForm(); cli();
+}
+function syncForm() {
+  const scan = $("qOp").value === "scan", gsi = $("qIndex").value;
+  const g = cur && cur.GlobalSecondaryIndexes.find((x) => x.IndexName === gsi);
+  const pkName = g ? g.KeySchema[0].AttributeName : cur ? cur.KeySchema[0].AttributeName : "run_id";
+  const sk = cur && cur.KeySchema[1];
+  $("pkLabel").textContent = `Partition key: ${pkName}`; $("qPk").placeholder = pkName === "type" ? "barcode, fault_set, state ..." : "run_id";
+  $("qPk").setAttribute("list", pkName === "type" ? "" : "runIds");
+  $("pkWrap").hidden = scan; $("qIndex").parentElement.hidden = scan;
+  $("skWrap").hidden = scan || !sk; $("skV1Wrap").hidden = scan || !sk || !$("qSkOp").value; $("skV2Wrap").hidden = scan || $("qSkOp").value !== "between";
+  $("skLabel").textContent = sk ? `Sort key: ${sk.AttributeName}` : "Sort key";
+  $("qSk1").placeholder = sk && sk.AttributeName === "ts" ? "ms since 1970" : "e.g. 1794812345678#0001";
+}
+["qOp", "qIndex", "qSkOp"].forEach((id) => $(id).addEventListener("change", () => { syncForm(); cli(); }));
+["qPk", "qSk1", "qSk2", "qLimit", "qOrder"].forEach((id) => $(id).addEventListener("input", cli));
+function addFilter(f) {
+  const row = h("div", { class: "frow" });
+  const attr = h("input", { type: "text", placeholder: "attribute, e.g. line_error", "aria-label": "Filter attribute", value: f?.attr || "" });
+  const op = h("select", { "aria-label": "Filter operator" }, ["=", "<>", "<", "<=", ">", ">=", "between", "begins_with", "contains", "exists", "not_exists"].map((o) => h("option", { value: o }, o.replace("_", " "))));
+  const v1 = h("input", { type: "text", placeholder: "value", "aria-label": "Filter value" }), v2 = h("input", { type: "text", placeholder: "and", "aria-label": "Second value", hidden: true });
+  op.addEventListener("change", () => { v2.hidden = op.value !== "between"; v1.hidden = /exists/.test(op.value); cli(); });
+  [attr, v1, v2].forEach((el) => el.addEventListener("input", cli));
+  row.append(attr, op, v1, v2, h("button", { type: "button", class: "btn small quiet", onclick: () => { row.remove(); cli(); } }, "Remove"));
+  row._get = () => { const val = (x) => x === "" ? x : isNaN(+x) ? (x === "true" ? true : x === "false" ? false : x) : +x;
+    return attr.value.trim() ? { attr: attr.value.trim(), op: op.value, value: op.value === "between" ? [val(v1.value), val(v2.value)] : val(v1.value) } : null; };
+  $("filters").append(row); cli();
+}
+$("addFilter").onclick = () => addFilter();
+function request() {
+  const scan = $("qOp").value === "scan";
+  const filters = [...$("filters").children].map((r) => r._get()).filter(Boolean);
+  const body = { TableName: cur.TableName, Limit: +$("qLimit").value || 100, filters };
+  if (!scan) {
+    body.pk = $("qPk").value.trim(); body.IndexName = $("qIndex").value || null; body.ScanIndexForward = $("qOrder").value === "asc";
+    const op = $("qSkOp").value;
+    if (op) body.sk = { op, value: op === "between" ? [$("qSk1").value.trim(), $("qSk2").value.trim()] : $("qSk1").value.trim() };
+  }
+  return body;
+}
+function cli() {
+  if (!cur) return;
+  const b = request(), scan = $("qOp").value === "scan";
+  const names = {}, values = {}; let n = 0;
+  const val = (v) => { const k = ":v" + n++; values[k] = typeof v === "number" ? { N: String(v) } : typeof v === "boolean" ? { BOOL: v } : { S: String(v) }; return k; };
+  const nm = (a) => { const k = "#" + a.split(".")[0]; names[k] = a.split(".")[0]; return k + a.slice(a.split(".")[0].length); };
+  const parts = [`aws dynamodb ${scan ? "scan" : "query"} --table-name ${cur.TableName}`];
+  if (!scan) {
+    const g = cur.GlobalSecondaryIndexes.find((x) => x.IndexName === b.IndexName);
+    if (g) parts.push(`--index-name ${g.IndexName}`);
+    const pkName = g ? g.KeySchema[0].AttributeName : cur.KeySchema[0].AttributeName, sk = cur.KeySchema[1];
+    let kce = `${nm(pkName)} = ${val(b.pk || "<run_id>")}`;
+    if (b.sk && sk) {
+      const skv = (x) => sk.AttributeName === "ts" ? +x || 0 : x;
+      kce += b.sk.op === "between" ? ` AND ${nm(sk.AttributeName)} BETWEEN ${val(skv(b.sk.value[0]))} AND ${val(skv(b.sk.value[1]))}` :
+        b.sk.op === "begins_with" ? ` AND begins_with(${nm(sk.AttributeName)}, ${val(b.sk.value)})` : ` AND ${nm(sk.AttributeName)} ${b.sk.op} ${val(skv(b.sk.value))}`;
+    }
+    parts.push(`--key-condition-expression "${kce}"`);
+    if (!b.ScanIndexForward) parts.push("--no-scan-index-forward");
+  }
+  if (b.filters.length) parts.push(`--filter-expression "${b.filters.map((f) => f.op === "between" ? `${nm(f.attr)} BETWEEN ${val(f.value[0])} AND ${val(f.value[1])}` :
+    f.op === "begins_with" || f.op === "contains" ? `${f.op}(${nm(f.attr)}, ${val(f.value)})` : f.op === "exists" ? `attribute_exists(${nm(f.attr)})` :
+    f.op === "not_exists" ? `attribute_not_exists(${nm(f.attr)})` : `${nm(f.attr)} ${f.op} ${val(f.value)}`).join(" AND ")}"`);
+  if (Object.keys(names).length) parts.push(`--expression-attribute-names '${JSON.stringify(names)}'`);
+  if (Object.keys(values).length) parts.push(`--expression-attribute-values '${JSON.stringify(values)}'`);
+  parts.push(`--limit ${b.Limit}`);
+  $("cli").textContent = "Same request on AWS:\n" + parts.join(" \\\n    ");
+}
+async function runQuery(next) {
+  const b = request(); const scan = $("qOp").value === "scan";
+  if (!scan && !b.pk) { $("qMeta").textContent = ""; $("qResults").textContent = ""; $("qResults").append(h("p", { class: "err" }, "Enter a partition key value, or switch to Scan.")); return; }
+  if (next && lastKey) b.ExclusiveStartKey = lastKey;
+  let d;
+  try { d = await api(scan ? "/api/scan" : "/api/query", b); } catch (e) { $("qResults").textContent = ""; $("qResults").append(h("p", { class: "err" }, e.message)); return; }
+  lastKey = d.LastEvaluatedKey; $("qNext").hidden = !lastKey;
+  $("qMeta").textContent = `${d.Count} returned, ${d.ScannedCount} read${lastKey ? ", more available" : ""}`;
+  const out = $("qResults"); out.textContent = "";
+  if (!d.Items.length) { out.append(h("p", { class: "empty" }, !d.ScannedCount ? "No items for this key." : lastKey ? "Items were read but none passed the filter. Try Next page or loosen the filter." : "None of the items on this last page passed the filter.")); return; }
+  const freq = {}; d.Items.forEach((it) => Object.keys(it).forEach((k) => { freq[k] = (freq[k] || 0) + 1; }));
+  const keys = cur.KeySchema.map((k) => k.AttributeName);
+  const cols = [...keys, ...Object.keys(freq).filter((k) => !keys.includes(k) && !["raw_hex", "ts", "run_id"].includes(k)).sort((a, b) => freq[b] - freq[a]).slice(0, 9)];
+  const showv = (v) => v == null ? "" : Array.isArray(v) ? v.join(", ") : typeof v === "object" ? JSON.stringify(v) : String(v);
+  out.append(h("div", { class: "tablewrap", style: "max-height:540px" }, h("table", {},
+    h("thead", {}, h("tr", {}, cols.map((c) => h("th", {}, c)))),
+    h("tbody", {}, d.Items.map((it) => h("tr", { class: "click", tabindex: 0, onclick: (e) => sel(e.currentTarget, it), onkeydown: (e) => { if (e.key === "Enter") sel(e.currentTarget, it); } },
+      cols.map((c) => h("td", {}, showv(it[c])))))))));
+}
+function sel(tr, it) { document.querySelectorAll("#qResults tr.sel").forEach((x) => x.classList.remove("sel")); tr.classList.add("sel"); $("qItem").textContent = JSON.stringify(it, null, 2); }
+$("qForm").addEventListener("submit", (e) => { e.preventDefault(); lastKey = null; runQuery(false); });
+$("qNext").onclick = () => runQuery(true);
+
+/* ---------- start ---------- */
+startLive();
+const m = location.hash.match(/^#run=(.+)$/);
+if (m) openRun(decodeURIComponent(m[1])); else show(store.get("tele.view", "live"));
+window.addEventListener("hashchange", () => {
+  const hm = location.hash.match(/^#run=(.+)$/);
+  if (hm) openRun(decodeURIComponent(hm[1]));
+});
+api("/api/tables").then((d) => { $("tDb").textContent = bytes(d.db_bytes); }).catch(() => {});
+</script>
+</body>
+</html>

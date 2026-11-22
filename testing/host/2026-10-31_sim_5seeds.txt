@@ -1,0 +1,81 @@
+== boot                 5/5 seeds pass
+== calibrate            5/5 seeds pass
+== straight             5/5 seeds pass
+== curves               5/5 seeds pass
+== tight_curve          5/5 seeds pass
+barcode_A seed 2: FAIL: decoded '-' (0 reads), expected 'A'; command never executed at the junction; never reached S9 FINISHED (state S10, faults 0x0100); final state S10, not S9; line offset 490.0 mm > 25 mm while following; did not turn left (y=-40); unexpected faults 0x0100 [offset max 490.0 mean 116.6 mm, heading err max 92.1 rms 33.6 deg]
+barcode_A seed 4: FAIL: decoded '-' (0 reads), expected 'A'; command never executed at the junction; never reached S9 FINISHED (state S10, faults 0x0100); final state S10, not S9; line offset 488.5 mm > 25 mm while following; did not turn left (y=-66); unexpected faults 0x0100 [offset max 488.5 mean 116.5 mm, heading err max 91.2 rms 32.9 deg]
+barcode_A seed 5: FAIL: decoded '-' (0 reads), expected 'A'; command never executed at the junction; never reached S9 FINISHED (state S10, faults 0x0100); final state S10, not S9; line offset 496.2 mm > 25 mm while following; did not turn left (y=63); unexpected faults 0x0100 [offset max 496.2 mean 119.1 mm, heading err max 91.2 rms 48.3 deg]
+== barcode_A            2/5 seeds pass
+barcode_B seed 1: FAIL: decoded '-' (0 reads), expected 'B'; command never executed at the junction; never reached S9 FINISHED (state S10, faults 0x0100); final state S10, not S9; line offset 502.9 mm > 25 mm while following; did not turn right (y=32); unexpected faults 0x0100 [offset max 502.9 mean 120.8 mm, heading err max 91.0 rms 31.3 deg]
+barcode_B seed 3: FAIL: command never executed at the junction; never reached S9 FINISHED (state S10, faults 0x0100); final state S10, not S9; line offset 495.0 mm > 25 mm while following; did not turn right (y=-42); unexpected faults 0x0100 [offset max 495.0 mean 119.3 mm, heading err max 90.7 rms 47.2 deg]
+barcode_B seed 4: FAIL: decoded '-' (0 reads), expected 'B'; command never executed at the junction; never reached S9 FINISHED (state S10, faults 0x0100); final state S10, not S9; line offset 488.5 mm > 25 mm while following; did not turn right (y=-40); unexpected faults 0x0100 [offset max 488.5 mean 116.6 mm, heading err max 91.3 rms 48.7 deg]
+barcode_B seed 5: FAIL: decoded '-' (0 reads), expected 'B'; command never executed at the junction; never reached S9 FINISHED (state S10, faults 0x0100); final state S10, not S9; line offset 494.5 mm > 25 mm while following; did not turn right (y=69); unexpected faults 0x0100 [offset max 494.5 mean 118.0 mm, heading err max 92.5 rms 33.9 deg]
+== barcode_B            1/5 seeds pass
+barcode_C seed 4: FAIL: decoded '-' (0 reads), expected 'C'; command never executed at the junction [finished 9.8 s; offset max 9.9 mean 5.1 mm, heading err max 9.0 rms 4.5 deg]
+barcode_C seed 5: FAIL: decoded '-' (0 reads), expected 'C'; command never executed at the junction [finished 9.8 s; offset max 9.8 mean 5.1 mm, heading err max 8.0 rms 4.6 deg]
+== barcode_C            3/5 seeds pass
+barcode_D seed 4: FAIL: first decode '-', expected 'D'; never reached S9 FINISHED (state S10, faults 0x0100); final state S10, not S9; did not come back to the END marker (x=1396); unexpected faults 0x0100 []
+barcode_D seed 5: FAIL: first decode '-', expected 'D'; never reached S9 FINISHED (state S10, faults 0x0100); final state S10, not S9; did not come back to the END marker (x=1398); unexpected faults 0x0100 []
+== barcode_D            3/5 seeds pass
+barcode_other seed 3: FAIL: decoded '-', expected 'X' [finished 9.8 s]
+barcode_other seed 4: FAIL: decoded '-', expected 'X' [finished 9.8 s]
+barcode_other seed 5: FAIL: decoded '-', expected 'X' [finished 9.8 s]
+== barcode_other        2/5 seeds pass
+barcode_expire seed 2: FAIL: decoded '-'; pending command did not expire [finished 11.7 s]
+barcode_expire seed 4: FAIL: decoded '-'; pending command did not expire [finished 11.7 s]
+barcode_expire seed 5: FAIL: decoded '-'; pending command did not expire [finished 11.7 s]
+== barcode_expire       2/5 seeds pass
+barcode_C_far seed 4: FAIL: decoded '-', expected 'C' [finished 11.7 s]
+barcode_C_far seed 5: FAIL: decoded '-', expected 'C' [finished 11.7 s]
+== barcode_C_far        3/5 seeds pass
+== barcode_cross_line   5/5 seeds pass
+== crossing             5/5 seeds pass
+== hump_40              5/5 seeds pass
+== hump_20              5/5 seeds pass
+== hump_none            5/5 seeds pass
+== obstacle             5/5 seeds pass
+== obstacle_left        5/5 seeds pass
+== obstacle_wall        5/5 seeds pass
+== obstacle_boxed       5/5 seeds pass
+== obstacle_corridor    5/5 seeds pass
+== obstacle_beside      5/5 seeds pass
+== servo_slow           5/5 seeds pass
+== servo_mirrored       5/5 seeds pass
+== line_gap             5/5 seeds pass
+== line_ends            5/5 seeds pass
+== line_step            5/5 seeds pass
+== line_step_60         5/5 seeds pass
+== estop                5/5 seeds pass
+== remote_stop          5/5 seeds pass
+== mqtt_dup             5/5 seeds pass
+== wifi_loss            5/5 seeds pass
+== imu_absent           5/5 seeds pass
+== imu_dies             5/5 seeds pass
+== imu_flaky            5/5 seeds pass
+== impact               5/5 seeds pass
+== stall                5/5 seeds pass
+== encoder_dead         5/5 seeds pass
+== sonar_dead           5/5 seeds pass
+== adc_stuck            5/5 seeds pass
+== ir_inverted          5/5 seeds pass
+== ir_straddle          5/5 seeds pass
+== motor_mismatch       5/5 seeds pass
+geometry_off seed 1: FAIL: decoded '-' (0 reads), expected 'A'; command never executed at the junction; never reached S9 FINISHED (state S10, faults 0x0100); final state S10, not S9; line offset 517.2 mm > 25 mm while following; did not turn left (y=5); unexpected faults 0x0100 [offset max 517.2 mean 125.5 mm, heading err max 91.3 rms 39.6 deg]
+geometry_off seed 3: FAIL: decoded '-' (0 reads), expected 'A'; command never executed at the junction; never reached S9 FINISHED (state S10, faults 0x0100); final state S10, not S9; line offset 514.0 mm > 25 mm while following; did not turn left (y=-21); unexpected faults 0x0100 [offset max 514.0 mean 123.9 mm, heading err max 92.1 rms 34.5 deg]
+geometry_off seed 5: FAIL: decoded '-' (0 reads), expected 'A'; command never executed at the junction; never reached S9 FINISHED (state S10, faults 0x0100); final state S10, not S9; line offset 494.5 mm > 25 mm while following; did not turn left (y=-25); unexpected faults 0x0100 [offset max 494.5 mean 116.9 mm, heading err max 91.0 rms 29.6 deg]
+== geometry_off         2/5 seeds pass
+== motor_reversed       5/5 seeds pass
+== encoder_reversed     5/5 seeds pass
+== stray_start          5/5 seeds pass
+== estop_bounce         5/5 seeds pass
+== estop_bypass         5/5 seeds pass
+== cpu_load             5/5 seeds pass
+full_course seed 1: FAIL: decodes , expected BA; hump not reported; 0 junction commands executed, expected 2; never reached S9 FINISHED (state S10, faults 0x0100); final state S10, not S9; unexpected faults 0x0100 []
+full_course seed 2: FAIL: decodes , expected BA; hump not reported; 0 junction commands executed, expected 2; never reached S9 FINISHED (state S10, faults 0x0100); final state S10, not S9; unexpected faults 0x0100 []
+full_course seed 3: FAIL: decodes , expected BA; hump not reported; 0 junction commands executed, expected 2; never reached S9 FINISHED (state S10, faults 0x0100); final state S10, not S9; unexpected faults 0x0100 []
+full_course seed 4: FAIL: decodes , expected BA; hump not reported; 0 junction commands executed, expected 2; never reached S9 FINISHED (state S10, faults 0x0100); final state S10, not S9; unexpected faults 0x0100 []
+full_course seed 5: FAIL: decodes , expected BA; hump not reported; 0 junction commands executed, expected 2; never reached S9 FINISHED (state S10, faults 0x0100); final state S10, not S9; unexpected faults 0x0100 []
+== full_course          0/5 seeds pass
+== endurance            5/5 seeds pass
+[SIM] SUMMARY 265 runs, 238 passed, 27 failed

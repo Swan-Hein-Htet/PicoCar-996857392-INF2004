@@ -1,0 +1,698 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PicoCar Mission Control</title>
+<script src="/meters.js"></script>
+<style>
+/* Mission-control display: true black, white type, hairlines, colour only
+   for state (red = stop/fault, amber = warning).  System fonts only. */
+:root {
+  --bg: #000000;
+  --fg: #FFFFFF;
+  --fg-2: rgba(255,255,255,0.72);
+  --fg-3: rgba(255,255,255,0.48);
+  --hair: rgba(255,255,255,0.16);
+  --hair-2: rgba(255,255,255,0.28);
+  --fill: rgba(255,255,255,0.05);
+  --red: #FF3B30;
+  --amber: #FFB020;
+  --green: #30D158;
+  --thin: "Avenir Next", "Helvetica Neue", "Segoe UI", system-ui, sans-serif;
+  --mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; background: var(--bg); }
+body { color: var(--fg); font-family: var(--thin); font-size: 14px; line-height: 1.45; -webkit-font-smoothing: antialiased; min-height: 100vh; }
+button, input { font: inherit; color: inherit; }
+:focus-visible { outline: 1px solid var(--fg); outline-offset: 3px; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.lbl { font-size: 11px; font-weight: 600; letter-spacing: 0.22em; text-transform: uppercase; color: var(--fg-3); }
+
+/* ---- top bar ---- */
+.top { display: flex; align-items: center; gap: 28px; padding: 16px 32px; border-bottom: 1px solid var(--hair); flex-wrap: wrap; }
+.mark { font-weight: 600; letter-spacing: 0.42em; font-size: 15px; }
+.mark span { color: var(--fg-3); font-weight: 500; letter-spacing: 0.3em; margin-left: 14px; font-size: 12px; }
+.links { display: flex; gap: 22px; flex-wrap: wrap; }
+.link-st { display: flex; align-items: center; gap: 8px; font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--fg-2); font-weight: 600; }
+.dot { width: 6px; height: 6px; border-radius: 50%; background: var(--fg-3); }
+.dot.on { background: var(--green); box-shadow: 0 0 8px var(--green); }
+.dot.bad { background: var(--red); box-shadow: 0 0 8px var(--red); }
+.spacer { flex: 1; }
+.modes { display: flex; gap: 18px; }
+.modes button { background: none; border: 0; padding: 4px 0; cursor: pointer; font-size: 11px; font-weight: 600; letter-spacing: 0.22em;
+  text-transform: uppercase; color: var(--fg-3); border-bottom: 1px solid transparent; }
+.modes button[aria-pressed="true"] { color: var(--fg); border-bottom-color: var(--fg); }
+
+/* ---- hero: gauges, clock, timeline ---- */
+.hero { padding: 26px 32px 6px; }
+.hud { display: grid; grid-template-columns: 200px minmax(0, 1fr) 200px; align-items: center; gap: 24px; }
+.gauge { text-align: center; }
+.gauge svg { width: 170px; height: 170px; display: block; margin: 0 auto; }
+.gauge .val { font-family: var(--thin); font-weight: 200; font-size: 44px; fill: var(--fg); font-variant-numeric: tabular-nums; }
+.gauge .unit { font-size: 10px; letter-spacing: 0.24em; fill: var(--fg-3); font-weight: 600; }
+.gauge .glbl { margin-top: -12px; }
+.centre { text-align: center; min-width: 0; }
+.state { font-size: 20px; font-weight: 500; letter-spacing: 0.32em; text-transform: uppercase; margin: 8px 0 0; }
+.clock { font-weight: 200; font-size: 76px; line-height: 1; letter-spacing: 0.04em; font-variant-numeric: tabular-nums; margin: 10px 0 6px; white-space: nowrap; }
+.clock .t { font-size: 34px; letter-spacing: 0.1em; color: var(--fg-2); margin-right: 14px; vertical-align: 0.55em; }
+.clock.idle { color: var(--fg-3); }
+.sub { color: var(--fg-2); font-size: 14px; margin: 0; }
+.humpline { margin: 12px 0 0; display: inline-flex; align-items: baseline; gap: 10px; padding: 6px 14px; border: 1px solid var(--amber); }
+.humpline .lbl { color: var(--amber); }
+.humpline b { font-weight: 300; font-size: 30px; font-variant-numeric: tabular-nums; line-height: 1; }
+.humpline small { font-size: 10px; font-weight: 600; letter-spacing: 0.2em; color: var(--fg-3); }
+.timeline { display: block; width: 100%; height: auto; margin-top: 4px; overflow: visible; }
+.timeline .base { stroke: var(--hair-2); }
+.timeline .prog { stroke: var(--fg); transition: stroke-dashoffset 0.9s cubic-bezier(.5,0,.2,1); }
+.timeline .ms { fill: var(--bg); stroke: var(--hair-2); stroke-width: 1.5; }
+.timeline .ms.passed { fill: var(--fg); stroke: var(--fg); }
+.timeline .msl { font-size: 11px; font-weight: 600; letter-spacing: 0.24em; fill: var(--fg-3); text-anchor: middle; text-transform: uppercase; }
+.timeline .msl.here { fill: var(--fg); }
+.timeline .marker { fill: var(--fg); }
+.timeline .halo { fill: none; stroke: var(--fg); stroke-width: 1; opacity: 0.6; transform-origin: center; transform-box: fill-box; animation: ping 2s infinite; }
+@keyframes ping { 0% { transform: scale(0.6); opacity: 0.8; } 100% { transform: scale(2.4); opacity: 0; } }
+.timeline.fault .prog, .timeline.fault .ms.passed { stroke: var(--red); }
+.timeline.fault .ms.passed, .timeline.fault .marker { fill: var(--red); }
+.timeline.fault .halo { stroke: var(--red); }
+.phases { display: flex; justify-content: center; gap: 26px; flex-wrap: wrap; margin: 2px 0 0; }
+.phase { font-size: 11px; font-weight: 600; letter-spacing: 0.22em; text-transform: uppercase; color: var(--fg-3); padding-bottom: 4px; border-bottom: 1px solid transparent; }
+.phase.on { color: var(--fg); border-bottom-color: var(--fg); }
+.alert { display: none; margin: 18px auto 0; max-width: 760px; text-align: center; padding: 10px 16px; font-size: 12px; font-weight: 600;
+  letter-spacing: 0.2em; text-transform: uppercase; border: 1px solid var(--red); color: var(--red); background: rgba(255,59,48,0.08); }
+.alert.show { display: block; }
+.alert.stale { border-color: var(--amber); color: var(--amber); background: rgba(255,176,32,0.07); }
+
+/* ---- panels ---- */
+.grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.95fr); gap: 16px; padding: 22px 32px 36px; align-items: start; }
+.panel { position: relative; border: 1px solid var(--hair); padding: 16px 18px 18px; background: linear-gradient(180deg, rgba(255,255,255,0.025), transparent 60%); min-width: 0; }
+.panel::before, .panel::after { content: ""; position: absolute; width: 10px; height: 10px; border-color: var(--fg-2); border-style: solid; }
+.panel::before { top: -1px; left: -1px; border-width: 1px 0 0 1px; }
+.panel::after { bottom: -1px; right: -1px; border-width: 0 1px 1px 0; }
+.ph { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 14px; gap: 10px; }
+.ph .lbl { color: var(--fg-2); }
+.ph .aux { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--fg-3); font-weight: 600; }
+.col-a { grid-column: 1; } .col-b { grid-column: 2; } .col-c { grid-column: 3; grid-row: 1 / span 3; }
+.span2 { grid-column: 1 / span 2; }
+
+/* control */
+.ctl { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
+.stop { width: 100%; min-height: 92px; border: 1px solid var(--red); background: rgba(255,59,48,0.08); color: var(--red); cursor: pointer;
+  display: flex; align-items: center; justify-content: space-between; padding: 0 22px; transition: background 0.12s, color 0.12s; }
+.stop:hover, .stop:active { background: var(--red); color: #fff; }
+.stop .w { font-size: 34px; font-weight: 600; letter-spacing: 0.32em; }
+.stop .k { font-size: 11px; font-weight: 600; letter-spacing: 0.22em; opacity: 0.85; }
+.acts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.act { border: 1px solid var(--hair-2); background: none; color: var(--fg); padding: 12px 8px; cursor: pointer; font-size: 11px; font-weight: 600;
+  letter-spacing: 0.2em; text-transform: uppercase; transition: background 0.12s, border-color 0.12s; }
+.act:hover { border-color: var(--fg); background: var(--fill); }
+.act.next { background: var(--fg); color: #000; border-color: var(--fg); }
+.act.minor { color: var(--fg-2); border-color: var(--hair); }
+.prompt { display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--hair-2); padding: 8px 2px; margin-top: 6px; }
+.prompt span { color: var(--fg-3); font-family: var(--mono); }
+.prompt input { flex: 1; background: none; border: 0; outline: none; font-family: var(--mono); font-size: 13px; min-width: 0; }
+.prompt input::placeholder { color: var(--fg-3); }
+.hint { margin: 12px 0 0; color: var(--fg-2); font-size: 13px; }
+
+/* vehicle */
+.readouts { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 14px 12px; margin: 0; }
+.readouts > div { min-width: 0; }
+.readouts dd { margin: 4px 0 0; font-weight: 300; font-size: 30px; line-height: 1; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.readouts dd small { font-size: 10px; font-weight: 600; letter-spacing: 0.2em; color: var(--fg-3); margin-left: 4px; }
+.readouts dd.txt { font-size: 15px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; line-height: 1.3; white-space: normal; overflow-wrap: anywhere; }
+.linebar { margin: 18px 0 4px; }
+.linebar svg { width: 100%; height: auto; display: block; }
+.ends { display: flex; justify-content: space-between; margin-top: 4px; }
+.ends .lbl { font-size: 10px; }
+.wheelbars { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 10px; align-items: center; margin-top: 16px; }
+.wheelbars .lbl { font-size: 10px; }
+.wb { height: 6px; background: var(--hair); position: relative; }
+.wb i { position: absolute; top: 0; bottom: 0; left: 50%; background: var(--fg); transition: width 0.15s, left 0.15s; }
+.wb::after { content: ""; position: absolute; left: 50%; top: -3px; bottom: -3px; width: 1px; background: var(--fg-3); }
+
+/* navigation / systems */
+.nav { display: flex; align-items: center; gap: 18px; }
+.nav svg { width: 120px; height: 46px; display: block; }
+.nav svg rect { fill: var(--fg); }
+.letter { font-weight: 200; font-size: 64px; line-height: 0.9; }
+.meaning { margin: 12px 0 0; color: var(--fg-2); font-size: 13px; }
+.sys { display: flex; flex-direction: column; gap: 8px; }
+.sysrow { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; align-items: baseline; }
+.sysrow .dot { align-self: center; grid-row: span 2; }
+.sysrow b { font-size: 12px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; }
+.sysrow span { grid-column: 2; font-size: 12.5px; color: var(--fg-2); }
+.sysrow.crit b { color: var(--red); } .sysrow.warn b { color: var(--amber); }
+.dot.warn { background: var(--amber); box-shadow: 0 0 8px var(--amber); }
+.nominal { display: flex; align-items: center; gap: 10px; font-size: 12px; font-weight: 600; letter-spacing: 0.22em; text-transform: uppercase; }
+
+/* manual */
+.man { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 22px; align-items: center; }
+.pad { display: grid; grid-template-columns: repeat(3, 50px); grid-template-rows: repeat(2, 50px); gap: 6px; }
+.k { border: 1px solid var(--hair-2); background: none; color: var(--fg); font-size: 15px; font-weight: 600; letter-spacing: 0.1em; cursor: pointer;
+  touch-action: none; user-select: none; transition: background 0.08s, color 0.08s; }
+.k.held { background: var(--fg); color: #000; border-color: var(--fg); }
+.k[data-k="w"] { grid-column: 2; } .k[data-k="a"] { grid-column: 1; grid-row: 2; } .k[data-k="s"] { grid-column: 2; grid-row: 2; } .k[data-k="d"] { grid-column: 3; grid-row: 2; }
+.arm { display: inline-flex; align-items: center; gap: 10px; border: 1px solid var(--hair-2); background: none; padding: 8px 14px; cursor: pointer;
+  font-size: 11px; font-weight: 600; letter-spacing: 0.2em; text-transform: uppercase; color: var(--fg-2); }
+.arm[aria-pressed="true"] { border-color: var(--amber); color: var(--amber); }
+.arm[aria-pressed="true"] .dot { background: var(--amber); box-shadow: 0 0 8px var(--amber); }
+.man p { margin: 12px 0 0; color: var(--fg-3); font-size: 12.5px; }
+
+/* flight log */
+.logp { display: flex; flex-direction: column; }
+.log { font-family: var(--mono); font-size: 12px; line-height: 1.65; height: calc(100vh - 420px); min-height: 380px; overflow: auto; padding-right: 6px; }
+.log p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--fg-2); }
+.log .car { color: var(--fg-3); }
+.log .me { color: var(--fg); }
+.log .me::before { content: "> "; color: var(--fg-3); }
+.log .bad { color: var(--red); }
+.log .bc { color: var(--fg); font-weight: 600; }
+.logfoot { display: flex; gap: 10px; margin-top: 10px; font-size: 11px; color: var(--fg-3); }
+.logfoot code { font-family: var(--mono); overflow-wrap: anywhere; }
+.jump { background: none; border: 0; color: var(--fg); cursor: pointer; text-decoration: underline; padding: 0; font-size: 11px; }
+.log::-webkit-scrollbar { width: 6px; } .log::-webkit-scrollbar-thumb { background: var(--hair-2); }
+
+/* barcode map */
+.bcmap .brushes { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+.brush { border: 1px solid var(--hair-2); background: none; color: var(--fg-2); padding: 7px 12px; cursor: pointer; font-size: 11px; font-weight: 600;
+  letter-spacing: 0.18em; text-transform: uppercase; display: inline-flex; gap: 8px; align-items: center; }
+.brush b { font-size: 13px; letter-spacing: 0; color: var(--fg); }
+.brush[aria-pressed="true"] { background: var(--fg); color: #000; border-color: var(--fg); }
+.brush[aria-pressed="true"] b { color: #000; }
+.tiles26 { display: grid; grid-template-columns: repeat(13, minmax(0, 1fr)); gap: 5px; }
+.lt { border: 1px solid var(--hair); background: none; color: var(--fg-3); cursor: pointer; padding: 6px 0 5px; display: flex; flex-direction: column;
+  align-items: center; gap: 1px; min-width: 0; }
+.lt .l { font-size: 20px; font-weight: 300; line-height: 1.1; }
+.lt .c { font-size: 10px; font-weight: 700; letter-spacing: 0.12em; }
+.lt.on { border-color: var(--fg); color: var(--fg); background: var(--fill); }
+.lt.diff { box-shadow: inset 0 -2px 0 var(--amber); }
+.lt:hover { border-color: var(--fg-2); }
+.mapsum { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 14px 0 0; }
+.mapsum dt { font-size: 10px; font-weight: 600; letter-spacing: 0.2em; text-transform: uppercase; color: var(--fg-3); }
+.mapsum dd { margin: 3px 0 0; font-size: 17px; font-weight: 400; letter-spacing: 0.12em; overflow-wrap: anywhere; }
+.maprow { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 14px; }
+.maprow .act { padding: 10px 14px; }
+.maprow .act:disabled { opacity: 0.35; cursor: not-allowed; }
+.mapst { display: flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 600; letter-spacing: 0.18em; text-transform: uppercase; color: var(--fg-2); }
+.mapst.bad { color: var(--red); }
+@media (max-width: 1180px) {
+  .grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .col-c { grid-column: 1 / span 2; grid-row: auto; }
+  .log { height: 50vh; }
+}
+@media (max-width: 760px) {
+  .tiles26 { grid-template-columns: repeat(7, minmax(0, 1fr)); }
+  .mapsum { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .top, .hero, .grid { padding-left: 16px; padding-right: 16px; }
+  .hud { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .centre { grid-column: 1 / span 2; grid-row: 1; }
+  .gauge svg { width: 130px; height: 130px; }
+  .clock { font-size: 48px; } .clock .t { font-size: 22px; }
+  .state { font-size: 15px; letter-spacing: 0.24em; }
+  .grid { grid-template-columns: minmax(0, 1fr); }
+  .col-a, .col-b, .col-c, .span2 { grid-column: 1; }
+  .timeline .msl { display: none; }
+  .acts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .man { grid-template-columns: minmax(0, 1fr); }
+}
+@media (prefers-reduced-motion: reduce) { .timeline .halo { animation: none; } .timeline .prog { transition: none; } }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="mark">PICOCAR<span>MISSION CONTROL</span></div>
+  <div class="links" aria-live="polite">
+    <span class="link-st"><span class="dot" id="dBroker"></span><span id="tBroker">Broker offline</span></span>
+    <span class="link-st"><span class="dot" id="dCar"></span><span id="tCar">No vehicle data</span></span>
+  </div>
+  <span class="spacer"></span>
+  <div class="modes" role="group" aria-label="Log view">
+    <button id="mControl" aria-pressed="true" title="Only the important notices">Control</button>
+    <button id="mVerbose" aria-pressed="false" title="Every line from the car">Verbose</button>
+  </div>
+</header>
+
+<section class="hero" aria-label="Mission status">
+  <div class="hud">
+    <div class="gauge">
+      <svg viewBox="0 0 200 200" aria-hidden="true">
+        <circle cx="100" cy="100" r="80" fill="none" stroke="var(--hair)" stroke-width="5" id="gSpeedBg"/>
+        <circle cx="100" cy="100" r="80" fill="none" stroke="var(--fg)" stroke-width="5" stroke-linecap="round" id="gSpeed"/>
+        <text x="100" y="108" text-anchor="middle" class="val" id="gSpeedV">0</text>
+        <text x="100" y="134" text-anchor="middle" class="unit">MM/S</text>
+      </svg>
+      <div class="lbl glbl">Speed</div>
+    </div>
+    <div class="centre">
+      <div class="lbl">Mission status</div>
+      <p class="state" id="stateName">Awaiting vehicle</p>
+      <div class="clock idle" id="clock" aria-label="Time since Go"><span class="t">T+</span><span id="clockV">00:00:00.0</span></div>
+      <p class="sub" id="hint">Power the car. It finds this PC by itself.</p>
+      <p class="humpline" id="humpLine" hidden><span class="lbl">Last hump</span><b id="humpVal">0</b><small>MM</small><span class="lbl" id="humpMax"></span></p>
+    </div>
+    <div class="gauge">
+      <svg viewBox="0 0 200 200" aria-hidden="true">
+        <circle cx="100" cy="100" r="80" fill="none" stroke="var(--hair)" stroke-width="5" id="gDistBg"/>
+        <circle cx="100" cy="100" r="80" fill="none" stroke="var(--fg)" stroke-width="5" stroke-linecap="round" id="gDist"/>
+        <text x="100" y="108" text-anchor="middle" class="val" id="gDistV">0</text>
+        <text x="100" y="134" text-anchor="middle" class="unit">MM</text>
+      </svg>
+      <div class="lbl glbl">Distance</div>
+    </div>
+  </div>
+  <svg class="timeline" id="timeline" viewBox="0 0 1000 130" role="img" aria-label="Mission timeline">
+    <path id="arc" class="base" d="M 30 96 Q 500 -16 970 96" fill="none" stroke-width="1.5" stroke-dasharray="2 6"/>
+    <path id="prog" class="prog" d="M 30 96 Q 500 -16 970 96" fill="none" stroke-width="2"/>
+    <g id="milestones"></g>
+    <g id="mk" transform="translate(30 96)"><circle class="halo" r="7"/><circle class="marker" r="5"/></g>
+  </svg>
+  <div class="phases" id="phases" aria-label="While following"></div>
+  <div class="alert" id="alert" role="status"></div>
+</section>
+
+<main class="grid">
+  <section class="panel col-a" aria-labelledby="hCtl">
+    <div class="ph"><span class="lbl" id="hCtl">Control</span><span class="aux">Same as GP20</span></div>
+    <div class="ctl">
+      <button class="stop" id="bStop" aria-label="Stop the car (Esc)" title="Stops at once; Reset clears it"><span class="w">STOP</span><span class="k">ESC</span></button>
+      <div class="acts">
+        <button class="act" data-cmd="cal" id="bCal">Calibrate</button>
+        <button class="act" data-cmd="go" id="bGo">Go</button>
+        <button class="act" data-cmd="reset" id="bReset">Reset</button>
+        <button class="act minor" data-cmd="end" title="Backup end-of-course marker">End</button>
+        <button class="act minor" data-cmd="scan" title="Barcode test build: creep over the barcode">Scan</button>
+        <button class="act minor" data-cmd="status">Status</button>
+      </div>
+      <form class="prompt" id="cmdForm" autocomplete="off">
+        <span aria-hidden="true">&gt;</span><label for="cmd" class="sr">Console command</label>
+        <input id="cmd" type="text" placeholder="faults, raw START, help">
+      </form>
+    </div>
+    <p class="hint" id="hint2"></p>
+  </section>
+
+  <section class="panel col-b" aria-labelledby="hVeh">
+    <div class="ph"><span class="lbl" id="hVeh">Vehicle</span><span class="aux" id="lineState">Line -</span></div>
+    <dl class="readouts">
+      <div><dt class="lbl">Left</dt><dd id="vL">-</dd></div>
+      <div><dt class="lbl">Right</dt><dd id="vR">-</dd></div>
+      <div><dt class="lbl">Turn</dt><dd id="turn">-</dd></div>
+    </dl>
+    <div class="wheelbars" aria-hidden="true">
+      <span class="lbl">L</span><div class="wb"><i id="wbL"></i></div>
+      <span class="lbl">R</span><div class="wb"><i id="wbR"></i></div>
+    </div>
+    <div class="linebar">
+      <svg viewBox="0 0 300 46" role="img" aria-label="Line position under the car" id="linesvg">
+        <line x1="0" x2="300" y1="23" y2="23" stroke="var(--hair)"/>
+        <line x1="150" x2="150" y1="8" y2="38" stroke="var(--fg-3)"/>
+        <circle id="sL" cx="120" cy="23" r="5" fill="none" stroke="var(--fg-2)"/>
+        <circle id="sR" cx="180" cy="23" r="5" fill="none" stroke="var(--fg-2)"/>
+        <rect id="lineMark" x="147" y="4" width="6" height="38" fill="var(--fg)"/>
+      </svg>
+      <div class="ends"><span class="lbl">Line left</span><span class="lbl" id="lineErr" style="color:var(--fg-2)">Error 0</span><span class="lbl">Line right</span></div>
+    </div>
+    <dl class="readouts" style="margin-top:14px">
+      <div><dt class="lbl">Motion</dt><dd class="txt" id="motion">-</dd></div>
+      <div><dt class="lbl">Hump</dt><dd id="hump">-</dd></div>
+      <div><dt class="lbl">Obstacle</dt><dd class="txt" id="obst">-</dd></div>
+    </dl>
+  </section>
+
+  <section class="panel col-c logp" aria-labelledby="hLog">
+    <div class="ph"><span class="lbl" id="hLog">Flight log</span><span class="aux" id="logCount"></span></div>
+    <div class="log" id="log" role="log" aria-live="polite"></div>
+    <div class="logfoot"><span>Saved to <code id="logPath">-</code></span><span class="spacer"></span><button class="jump" id="follow" hidden>Latest</button></div>
+  </section>
+
+  <section class="panel col-a" aria-labelledby="hNav">
+    <div class="ph"><span class="lbl" id="hNav">Navigation</span><span class="aux">Last barcode</span></div>
+    <div class="nav">
+      <svg id="bcSvg" viewBox="0 0 47 30" preserveAspectRatio="none" aria-hidden="true"></svg>
+      <div class="letter" id="bcLetter">-</div>
+    </div>
+    <p class="meaning" id="bcMeaning">No barcode read yet</p>
+    <p class="meaning" id="bcReject" style="margin-top:4px;color:var(--fg-3)"></p>
+  </section>
+
+  <section class="panel col-b" aria-labelledby="hSys">
+    <div class="ph"><span class="lbl" id="hSys">Systems</span><span class="aux">Faults</span></div>
+    <div class="sys" id="faults"><span class="nominal"><span class="dot on"></span>All systems nominal</span></div>
+  </section>
+
+  <section class="panel span2" aria-labelledby="hTilt">
+    <div class="ph"><span class="lbl" id="hTilt">Tilt, hump, obstacle</span><span class="aux">Live from the car</span></div>
+    <div id="meters"></div>
+  </section>
+
+  <section class="panel span2" aria-labelledby="hMan">
+    <div class="ph"><span class="lbl" id="hMan">Manual control</span><span class="aux">Separate page</span></div>
+    <div class="man">
+      <a class="act" href="/manual" target="_blank" rel="noopener" style="text-decoration:none;text-align:center;padding:14px 22px">Open manual control</a>
+      <p style="margin:0">W A S D driving, plaid mode at 250 mm/s and the stunts (J-turn, reverse slalom, bootleg, trail and pendulum turns) are on their own page.
+        Keep this page open beside it: STOP and Esc work from both.</p>
+    </div>
+  </section>
+
+  <section class="panel span2 bcmap" aria-labelledby="hMap">
+    <div class="ph"><span class="lbl" id="hMap">Barcode commands</span><span class="aux">Set before the run. Unmapped letters do nothing</span></div>
+    <div class="brushes" role="group" aria-label="Command to paint">
+      <button class="brush" data-c="L" aria-pressed="true"><b>L</b>Turn left</button>
+      <button class="brush" data-c="R" aria-pressed="false"><b>R</b>Turn right</button>
+      <button class="brush" data-c="S" aria-pressed="false"><b>S</b>Straight</button>
+      <button class="brush" data-c="U" aria-pressed="false"><b>U</b>U-turn</button>
+      <button class="brush" data-c="-" aria-pressed="false"><b>&ndash;</b>Unmapped</button>
+    </div>
+    <div class="tiles26" id="tiles26" aria-label="Letters A to Z"></div>
+    <dl class="mapsum">
+      <div><dt>Turn left</dt><dd id="sumL">-</dd></div>
+      <div><dt>Turn right</dt><dd id="sumR">-</dd></div>
+      <div><dt>Straight</dt><dd id="sumS">-</dd></div>
+      <div><dt>U-turn</dt><dd id="sumU">-</dd></div>
+    </dl>
+    <div class="maprow">
+      <button class="act next" id="mapSend">Send to car</button>
+      <button class="act minor" id="mapRevert">Car's map</button>
+      <button class="act minor" id="mapClear">Clear all</button>
+      <button class="act minor" id="mapDefault">A B C D default</button>
+      <span class="mapst" id="mapSt"><span class="dot"></span><span id="mapStText">Waiting for the car's map</span></span>
+    </div>
+  </section>
+</main>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const store = { get(k, d) { try { return localStorage.getItem(k) ?? d; } catch { return d; } },
+                set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
+const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+const NS = "http://www.w3.org/2000/svg";
+
+const MILESTONES = [["Startup", [0], 0], ["Calibrate", [1], 0.22], ["Ready", [2], 0.44], ["Follow", [3, 4, 5, 6, 7, 8], 0.72], ["Finish", [9], 1]];
+const COURSE = new Set([3, 4, 5, 6, 7, 8]);
+const STATE_TITLE = { 0: "Vehicle startup", 1: "Awaiting calibration", 2: "Ready for go", 3: "Following the line", 4: "Reading barcode",
+  5: "Junction turn", 6: "Hump traverse", 7: "Obstacle bypass", 8: "Line search", 9: "Course complete", 10: "Vehicle safed" };
+const PHASES = [[3, "Line"], [4, "Barcode"], [5, "Junction"], [6, "Hump"], [7, "Obstacle"], [8, "Search"]];
+const MOTION = ["Idle", "Following", "Forward", "Backward", "Turn left", "Turn right", "Stopping", "Motors off"];
+const LINE = ["Calibrating", "Tracking", "Junction", "Lost"];
+const PLAN = ["continue", "bypass left", "bypass right", "reverse"];
+const REJECT = ["", "wrong number of bars", "start/stop framing", "bar width ratio", "unknown pattern", "too long"];
+const MAP_WORD = { L: "Turn left at the next junction", R: "Turn right at the next junction", S: "Straight on at the next junction", U: "U-turn" };
+let carMap = null;
+function meaningOf(letter) {
+  if (!carMap || !/^[A-Z]$/.test(letter)) return "No navigation command";
+  return MAP_WORD[carMap[letter.charCodeAt(0) - 65]] || "Unmapped, no command";
+}
+const CODE39 = { A:0x109,B:0x049,C:0x148,D:0x019,E:0x118,F:0x058,G:0x00D,H:0x10C,I:0x04C,J:0x01C,
+  K:0x103,L:0x043,M:0x142,N:0x013,O:0x112,P:0x052,Q:0x007,R:0x106,S:0x046,T:0x016,U:0x181,V:0x0C1,
+  W:0x1C0,X:0x091,Y:0x190,Z:0x0D0,"0":0x034,"1":0x121,"2":0x061,"3":0x160,"4":0x031,"5":0x130,
+  "6":0x070,"7":0x025,"8":0x124,"9":0x064,"-":0x085,".":0x184," ":0x0C4,"$":0x0A8,"/":0x0A2,
+  "+":0x08A,"%":0x02A,"*":0x094 };
+
+/* ---------- gauges: 270-degree rings ---------- */
+const C = 2 * Math.PI * 80, ARC = 0.75 * C;
+["gSpeedBg", "gSpeed", "gDistBg", "gDist"].forEach((id) => { const el = $(id); el.setAttribute("transform", "rotate(135 100 100)"); });
+$("gSpeedBg").setAttribute("stroke-dasharray", `${ARC} ${C}`); $("gDistBg").setAttribute("stroke-dasharray", `${ARC} ${C}`);
+function gauge(id, frac) { $(id).setAttribute("stroke-dasharray", `${Math.max(0.001, Math.min(1, frac)) * ARC} ${C}`); }
+gauge("gSpeed", 0); gauge("gDist", 0);
+
+const meters = window.PicoMeters($("meters"));
+
+/* ---------- timeline ---------- */
+const arc = $("arc"), L = arc.getTotalLength(), prog = $("prog");
+prog.style.strokeDasharray = L; prog.style.strokeDashoffset = L;
+const ms = MILESTONES.map(([name, , f]) => {
+  const p = arc.getPointAtLength(f * L);
+  const c = document.createElementNS(NS, "circle"); c.setAttribute("cx", p.x); c.setAttribute("cy", p.y); c.setAttribute("r", 5); c.setAttribute("class", "ms");
+  const t = document.createElementNS(NS, "text"); t.setAttribute("x", p.x); t.setAttribute("y", p.y + 28); t.setAttribute("class", "msl"); t.textContent = name.toUpperCase();
+  $("milestones").append(c, t); return { c, t };
+});
+let mkF = 0, mkTarget = -1, mkAnim = null;
+function placeMarker(f) { const p = arc.getPointAtLength(f * L); $("mk").setAttribute("transform", `translate(${p.x} ${p.y})`); }
+function moveTo(f) {
+  if (f === mkTarget) return;
+  mkTarget = f; prog.style.strokeDashoffset = L * (1 - f);
+  if (reduceMotion) { mkF = f; placeMarker(f); return; }
+  cancelAnimationFrame(mkAnim);
+  const from = mkF, t0 = performance.now();
+  const step = (now) => { const k = Math.min(1, (now - t0) / 900), e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
+    mkF = from + (f - from) * e; placeMarker(mkF); if (k < 1) mkAnim = requestAnimationFrame(step); };
+  mkAnim = requestAnimationFrame(step);
+}
+placeMarker(0);
+$("phases").innerHTML = PHASES.map(([s, n]) => `<span class="phase" data-s="${s}">${n}</span>`).join("");
+let lastMs = 0;
+function drawTimeline(state, distance) {
+  const fault = state === 10;
+  $("timeline").classList.toggle("fault", fault);
+  let here = MILESTONES.findIndex(([, ss]) => ss.includes(state));
+  if (fault) here = lastMs || (distance > 0 ? 3 : 0);
+  if (here >= 0) { lastMs = here; moveTo(MILESTONES[here][2]); }
+  ms.forEach((m, i) => { m.c.classList.toggle("passed", here >= 0 && i <= here); m.t.classList.toggle("here", i === here); });
+  document.querySelectorAll(".phase").forEach((el) => el.classList.toggle("on", +el.dataset.s === state));
+}
+
+/* ---------- mission clock: T+ from Go ---------- */
+let tStart = null, tStop = null, prevState = null;
+function clockState(state) {
+  const was = prevState != null && COURSE.has(prevState), now = COURSE.has(state);
+  if (now && (!was || tStart == null)) { tStart = Date.now(); tStop = null; }
+  if (!now && was) tStop = Date.now();
+  prevState = state;
+}
+function fmtClock(ms) {
+  const t = Math.max(0, ms) / 1000, hh = Math.floor(t / 3600), mm = Math.floor(t / 60) % 60, ss = Math.floor(t) % 60, ds = Math.floor(t * 10) % 10;
+  return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}:${String(ss).padStart(2, "0")}.${ds}`;
+}
+setInterval(() => {
+  const running = tStart != null && tStop == null;
+  $("clock").classList.toggle("idle", tStart == null);
+  $("clockV").textContent = tStart == null ? "00:00:00.0" : fmtClock((tStop || Date.now()) - tStart);
+  $("clock").setAttribute("aria-label", running ? "Time since Go" : "Run time");
+}, 100);
+
+/* ---------- barcode ---------- */
+function drawBarcode(letter) {
+  const svg = $("bcSvg");
+  if (!letter || !(letter in CODE39)) { svg.innerHTML = ""; return; }
+  let x = 0, out = "";
+  ["*", letter, "*"].forEach((c, pos) => {
+    if (pos) x += 1;
+    for (let bit = 0; bit < 9; bit++) { const w = (CODE39[c] >> (8 - bit)) & 1 ? 3 : 1; if (bit % 2 === 0) out += `<rect x="${x}" y="0" width="${w}" height="30"/>`; x += w; }
+  });
+  svg.innerHTML = out;
+}
+
+/* ---------- state ---------- */
+function setDot(id, cls) { $(id).className = "dot " + cls; }
+function render(s) {
+  setDot("dBroker", s.broker ? "on" : "bad");
+  $("tBroker").textContent = s.broker ? "Broker link" : "Broker offline";
+  $("logPath").textContent = s.log || "-";
+  const r = s.rec, stale = s.age == null || s.age > 3;
+  if (!r) { setDot("dCar", ""); $("tCar").textContent = "No vehicle data"; }
+  else if (stale) { setDot("dCar", "bad"); $("tCar").textContent = `Vehicle silent ${Math.round(s.age)} s`; }
+  else { setDot("dCar", "on"); $("tCar").textContent = `Vehicle ${s.age.toFixed(1)} s`; }
+  const state = r ? r.mission_state : -1;
+  if (r) { drawTimeline(state, r.distance_mm); if (!stale) clockState(state); }
+  $("stateName").textContent = !r ? "Awaiting vehicle" : (STATE_TITLE[state] || "State " + state) + (stale ? " (last seen)" : "");
+
+  const al = $("alert");
+  if (r && !stale && state === 10) {
+    const names = faultList(r.faults, s.faultHelp).filter((f) => f.crit).map((f) => f.name.replace(/_/g, " ")).join(", ") || "unknown fault";
+    al.className = "alert show"; al.textContent = `Vehicle safed: ${names}. Reset to recover.`;
+  } else if (r && stale) {
+    al.className = "alert show stale"; al.textContent = "Telemetry lost. Car off, out of range or restarting. Showing last known state.";
+  } else al.className = "alert";
+
+  const next = { 1: "bCal", 2: "bGo", 9: "bGo", 10: "bReset" }[stale ? -1 : state];
+  ["bCal", "bGo", "bReset"].forEach((id) => $(id).classList.toggle("next", id === next));
+  const hint = !r ? "Power the car. It finds this PC by itself." : stale ? "Waiting for the car to come back." :
+    ({ 0: "Vehicle starting up.", 1: "Place the car on the line, then Calibrate.", 2: "Calibrated. Go starts the run.",
+       9: "Go runs again. Calibrate recalibrates.", 10: "The car is holding still until you Reset." })[state] ?? "Driving. STOP or Esc halts it at once.";
+  $("hint").textContent = hint;
+  $("hint2").textContent = !r ? "Calibrate and Go still send the command, same as GP20." : "";
+
+  if (r) {
+    const sp = (Math.abs(r.speed_left_mms) + Math.abs(r.speed_right_mms)) / 2;
+    $("gSpeedV").textContent = Math.round(sp); gauge("gSpeed", sp / 200);
+    $("gDistV").textContent = r.distance_mm; gauge("gDist", r.distance_mm / 5000);
+    $("lineState").textContent = "Line " + (LINE[r.line_state] || "?");
+    const e = Math.max(-127, Math.min(127, r.line_error)), lx = 150 - (e / 127) * 110;
+    $("lineMark").setAttribute("x", lx - 3);
+    const near = (sx) => Math.abs(lx - sx) < 14;
+    $("sL").setAttribute("fill", near(120) ? "var(--fg)" : "none"); $("sR").setAttribute("fill", near(180) ? "var(--fg)" : "none");
+    $("lineErr").textContent = "Error " + (e > 0 ? "+" : "") + e;
+    const num = (id, v, u) => { $(id).innerHTML = ""; $(id).append(String(v)); const sm = document.createElement("small"); sm.textContent = u; $(id).append(sm); };
+    num("vL", r.speed_left_mms, "MM/S"); num("vR", r.speed_right_mms, "MM/S"); num("turn", r.turn_rate_dps, "DEG/S"); num("hump", s.humpNow ?? r.hump_max_mm, "MM");
+    const hmax = s.humpNow ?? r.hump_max_mm;        /* 0 after Calibrate */
+    meters.update(r, s.humpLast != null ? s.humpLast : null, hmax || s.humpMax);
+    /* The last hump from the car's log; the telemetry only has the highest. */
+    const last = s.humpLast != null ? s.humpLast : (hmax > 0 ? hmax : null);
+    $("humpLine").hidden = last == null;
+    $("humpVal").textContent = last == null ? "0" : String(last);
+    $("humpMax").textContent = hmax > 0 ? `highest ${hmax} mm` : "";
+    const wb = (id, v) => { const f = Math.max(-1, Math.min(1, v / 200)), el = $(id); el.style.width = Math.abs(f) * 50 + "%"; el.style.left = (f >= 0 ? 50 : 50 + f * 50) + "%"; };
+    wb("wbL", r.speed_left_mms); wb("wbR", r.speed_right_mms);
+    $("motion").textContent = MOTION[r.motion_state] || "?";
+    $("obst").textContent = r.obstacle_width_mm || r.bypass_plan ? `${r.obstacle_width_mm} mm, ${PLAN[r.bypass_plan]}` : "None";
+    $("bcReject").textContent = r.reject_reason ? "Last rejected read: " + (REJECT[r.reject_reason] || "?") : "";
+    drawFaults(r.faults, s.faultHelp);
+  }
+  const Lt = s.letter;
+  $("bcLetter").textContent = Lt || "-";
+  $("bcMeaning").textContent = Lt ? `${meaningOf(Lt)}. ${s.reads} read this session.` : "No barcode read yet";
+  mapState(s);
+  drawBarcode(Lt);
+}
+function faultList(mask, help) {
+  return Object.keys(help || {}).map((name, bit) => ({ name, bit, text: help[name][0], crit: help[name][1] })).filter((f) => (mask >> f.bit) & 1);
+}
+let faultKey = "";
+function drawFaults(mask, help) {
+  if (String(mask) === faultKey) return;
+  faultKey = String(mask);
+  const box = $("faults"); box.textContent = "";
+  const list = faultList(mask, help);
+  if (!list.length) { const n = document.createElement("span"); n.className = "nominal"; const d = document.createElement("span"); d.className = "dot on"; n.append(d, "All systems nominal"); box.append(n); return; }
+  list.sort((a, b) => b.crit - a.crit).forEach((f) => {
+    const row = document.createElement("div"); row.className = "sysrow " + (f.crit ? "crit" : "warn");
+    const d = document.createElement("span"); d.className = "dot " + (f.crit ? "bad" : "warn");
+    const b = document.createElement("b"); b.textContent = f.name.replace(/_/g, " ") + (f.crit ? "  critical" : "  warning");
+    const t = document.createElement("span"); t.textContent = f.text;
+    row.append(d, b, t); box.append(row);
+  });
+}
+
+/* ---------- flight log ---------- */
+const lines = [];
+let verbose = store.get("picocar.verbose", "0") === "1";
+function visible(ev) { if (ev.k === "out") return true; if (ev.k === "car") return verbose; if (ev.k === "notice") return !verbose; return ev.imp || verbose; }
+function cls(ev) {
+  if (ev.k === "car") return "car";
+  if (ev.k === "out") return ev.t.startsWith("car> ") ? "me" : "";
+  if (/BARCODE '|HUMP measured/.test(ev.t)) return "bc";
+  if (/fault cleared|S10 FAULT ->/.test(ev.t)) return "";
+  if (/FAULT|SAFE STATE|NOT read|could not|no reply|lost the broker|No barcode/.test(ev.t)) return "bad";
+  return "";
+}
+const logEl = $("log");
+let pinned = true;
+logEl.addEventListener("scroll", () => { pinned = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 24; $("follow").hidden = pinned; });
+$("follow").onclick = () => { logEl.scrollTop = logEl.scrollHeight; };
+function line(ev) { const p = document.createElement("p"); p.className = cls(ev); p.textContent = ev.k === "out" && ev.t.startsWith("car> ") ? ev.t.slice(5) : ev.t; return p; }
+function addLine(ev) {
+  lines.push(ev); if (lines.length > 3000) lines.splice(0, 500);
+  if (!visible(ev)) return;
+  logEl.appendChild(line(ev));
+  while (logEl.childElementCount > 1500) logEl.firstChild.remove();
+  if (pinned) logEl.scrollTop = logEl.scrollHeight;
+}
+function redraw() {
+  logEl.textContent = "";
+  const frag = document.createDocumentFragment();
+  lines.filter(visible).slice(-1500).forEach((ev) => frag.appendChild(line(ev)));
+  logEl.appendChild(frag); logEl.scrollTop = logEl.scrollHeight; pinned = true; $("follow").hidden = true;
+  $("logCount").textContent = verbose ? "Every line" : "Key events";
+}
+function setMode(v) { verbose = v; store.set("picocar.verbose", v ? "1" : "0"); $("mControl").setAttribute("aria-pressed", String(!v)); $("mVerbose").setAttribute("aria-pressed", String(v)); redraw(); }
+$("mControl").onclick = () => setMode(false);
+$("mVerbose").onclick = () => setMode(true);
+
+/* ---------- server ---------- */
+function post(p, body) {
+  return fetch(p, { method: "POST", headers: { "Content-Type": "application/json", "X-Car-UI": "1" }, body: JSON.stringify(body) })
+    .catch(() => addLine({ k: "out", t: "The console server is not running. Start it again with start_ui.sh." }));
+}
+function command(l) { post("/cmd", { line: l }); }
+document.querySelectorAll("[data-cmd]").forEach((b) => b.addEventListener("click", () => command(b.dataset.cmd)));
+$("bStop").onclick = () => command("stop");
+$("cmdForm").addEventListener("submit", (e) => { e.preventDefault(); const v = $("cmd").value.trim(); if (v) { command(v); $("cmd").value = ""; } });
+const es = new EventSource("/events");
+es.onmessage = (m) => {
+  const ev = JSON.parse(m.data);
+  if (ev.k === "state") { render(ev); return; }
+  if (ev.k === "car" && /T6: barcode map refused/.test(ev.t)) { mapNote = "Refused: " + ev.t.replace(/.*refused:?\s*/, ""); mapNoteBad = true; drawMap(); }
+  addLine(ev);
+};
+es.onerror = () => { setDot("dBroker", "bad"); $("tBroker").textContent = "Console server offline"; };
+es.onopen = () => { lines.length = 0; logEl.textContent = ""; };
+setMode(verbose);
+
+/* ---------- barcode map ---------- */
+const DEFAULT_MAP = "LRSU" + "-".repeat(22);
+let draft = store.get("picocar.mapDraft", null), brush = "L", mapEdited = false, mapNote = "", mapNoteBad = false, parkedNow = false;
+if (!draft || draft.length !== 26) draft = null;
+const tiles = [];
+for (let i = 0; i < 26; i++) {
+  const b = document.createElement("button"); b.className = "lt";
+  const l = document.createElement("span"); l.className = "l"; l.textContent = String.fromCharCode(65 + i);
+  const c = document.createElement("span"); c.className = "c";
+  b.append(l, c); b.addEventListener("click", () => paint(i));
+  $("tiles26").append(b); tiles.push(b);
+}
+document.querySelectorAll(".brush").forEach((b) => b.addEventListener("click", () => {
+  brush = b.dataset.c; document.querySelectorAll(".brush").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+}));
+function setDraft(m, edited) { draft = m; mapEdited = edited; store.set("picocar.mapDraft", m); drawMap(); }
+function paint(i) {
+  const cur = draft || carMap || DEFAULT_MAP;
+  const c = cur[i] === brush ? "-" : brush;          // painting the same command again clears it
+  setDraft(cur.slice(0, i) + c + cur.slice(i + 1), true);
+}
+const NAMES = { L: "left", R: "right", S: "straight", U: "u-turn", "-": "unmapped" };
+function drawMap() {
+  const m = draft || carMap || DEFAULT_MAP;
+  tiles.forEach((t, i) => {
+    const c = m[i];
+    t.classList.toggle("on", c !== "-");
+    t.classList.toggle("diff", !!carMap && carMap[i] !== c);
+    t.querySelector(".c").textContent = c === "-" ? "\u2013" : c;
+    t.setAttribute("aria-label", `${String.fromCharCode(65 + i)}: ${NAMES[c]}`);
+  });
+  ["L", "R", "S", "U"].forEach((k) => {
+    const ls = [...m].map((c, i) => c === k ? String.fromCharCode(65 + i) : null).filter(Boolean);
+    $("sum" + k).textContent = ls.length ? ls.join(" ") : "\u2013";
+  });
+  const same = !!carMap && m === carMap;
+  $("mapSend").classList.toggle("next", !same);
+  $("mapSend").disabled = !parkedNow;
+  $("mapSend").title = parkedNow ? "" : "The car takes a new map only while parked: before calibrating, calibrated, or finished";
+  const st = $("mapSt"); st.className = "mapst" + (mapNoteBad ? " bad" : "");
+  const dot = st.querySelector(".dot");
+  dot.className = "dot " + (mapNoteBad ? "bad" : same ? "on" : carMap ? "warn" : "");
+  $("mapStText").textContent = mapNote || (!carMap ? "Waiting for the car's map" : same ? "The car has this map" : "Not sent: differs from the car");
+}
+function mapState(s) {
+  const r = s.rec, stale = s.age == null || s.age > 3;
+  parkedNow = !!r && !stale && [0, 1, 2, 9].includes(r.mission_state);
+  if (s.map && s.map !== carMap) {
+    carMap = s.map;
+    if (!mapEdited || draft === carMap) { draft = null; mapEdited = false; }
+    if (mapNote.startsWith("Sending")) { mapNote = ""; mapNoteBad = false; }
+  }
+  drawMap();
+}
+$("mapSend").addEventListener("click", () => {
+  const m = draft || carMap || DEFAULT_MAP;
+  mapNote = "Sending..."; mapNoteBad = false; drawMap();
+  fetch("/map", { method: "POST", headers: { "Content-Type": "application/json", "X-Car-UI": "1" }, body: JSON.stringify({ map: m }) })
+    .then((r) => { if (!r.ok) { mapNote = "Not sent: console server could not publish"; mapNoteBad = true; drawMap(); } })
+    .catch(() => { mapNote = "Console server not running"; mapNoteBad = true; drawMap(); });
+  setTimeout(() => { if (mapNote === "Sending...") { mapNote = "No answer from the car"; mapNoteBad = true; drawMap(); } }, 4000);
+});
+$("mapRevert").addEventListener("click", () => { if (carMap) setDraft(carMap, false); });
+$("mapClear").addEventListener("click", () => setDraft("-".repeat(26), true));
+$("mapDefault").addEventListener("click", () => setDraft(DEFAULT_MAP, true));
+drawMap();
+
+/* ---------- emergency stop key (driving is on /manual) ---------- */
+window.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") { post("/drive", { key: " " }); command("stop"); }
+});
+</script>
+</body>
+</html>
