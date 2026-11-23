@@ -202,6 +202,7 @@ void   course_straight(double len);
 void   course_arc(double radius, double deg);      /* + = left            */
 void   course_branch(double rel_deg, double len);  /* line off the cursor */
 void   course_width(double w);                    /* line width from here, mm */
+void   course_where(double *p_x, double *p_y);   /* cursor position now */
 void   course_barcode(char c, double narrow, double wide, int crossing);
 void   course_end_marker(double len, double width);
 void   course_gap(double len);                     /* break in the line   */

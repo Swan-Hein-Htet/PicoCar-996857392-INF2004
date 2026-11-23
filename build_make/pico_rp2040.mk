@@ -197,6 +197,11 @@ CFLAGS  += -DAPP_BARCODE_TEST=$(BARCODE_TEST)
 ifdef SERVO_SCAN
 CFLAGS  += -DSERVO_SCAN=$(SERVO_SCAN)
 endif
+# SERVO_SWEEP=0: no radar sweep, the sonar held facing front (default 1:
+# sweep while following, stopped at the front before an obstacle scan).
+ifdef SERVO_SWEEP
+CFLAGS  += -DSERVO_SWEEP=$(SERVO_SWEEP)
+endif
 # SERVO_TRIM=<deg>: the sonar points this far LEFT at servo centre
 # (drv_servo.h SERVO_TRIM_DEG).  Default 0.
 ifdef SERVO_TRIM

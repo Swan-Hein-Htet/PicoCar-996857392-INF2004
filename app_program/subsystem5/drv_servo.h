@@ -50,6 +50,13 @@
 #define SERVO_SCAN          0
 #endif
 
+/* 1: radar sweep while following (default).  The sweep stops facing
+   front, and settles, before the body scan of an obstacle (D80).  0 holds
+   the sonar facing front all the time. */
+#ifndef SERVO_SWEEP
+#define SERVO_SWEEP         1
+#endif
+
 /* Degrees the sonar points LEFT of straight ahead when the servo is at
    its electrical centre (horn fitted off by that much).  Every requested
    angle is shifted to compensate; requests beyond the servo's travel are

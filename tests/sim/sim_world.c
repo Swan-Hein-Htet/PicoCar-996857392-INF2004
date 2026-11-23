@@ -121,6 +121,7 @@ void course_arc(double radius, double deg)
 void course_turn(double deg) { g_course.cur_h += deg * PI / 180.0; }
 
 void course_width(double w) { g_course.line_w = w; }
+void course_where(double *p_x, double *p_y) { *p_x = g_course.cur.x; *p_y = g_course.cur.y; }
 void course_branch(double rel_deg, double len)
 {
     double const h = g_course.cur_h + rel_deg * PI / 180.0;

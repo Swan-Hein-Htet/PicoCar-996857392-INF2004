@@ -133,7 +133,11 @@ void
 servo_sweep (bool b_on)
 {
 #if !SERVO_SCAN
-    if (b_on)
+    if (b_on && (0 == SERVO_SWEEP))
+    {
+        /* Sweep disabled: the sonar is held facing front. */
+    }
+    else if (b_on)
     {
         if (!g_b_sweeping)
         {

@@ -285,6 +285,9 @@ EXPORT INT usermain (void)
     (void)tk_ref_ver(&ver);
     tm_printf((UB *)"\n=== P5-IS20 PicoCar on micro T-Kernel"
               " (spec 0x%04x) ===\n", ver.spver);
+    /* Which image is on the car (D78): logs could not tell. */
+    tm_printf((UB *)"firmware built %s %s\n", (UB *)__DATE__,
+              (UB *)__TIME__);
 #if TK_SUPPORT_SMP
     tm_printf((UB *)"dual-core build: services core 0, control core 1\n");
 #else

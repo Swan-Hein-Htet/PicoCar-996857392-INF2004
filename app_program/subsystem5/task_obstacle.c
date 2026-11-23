@@ -48,6 +48,8 @@
 #define FLOOR_EXTRA_MM          50U     /* more when the sonar sees floor
                                            (25 tried, back to 50)         */
 #define SIDE_TIE_MM             20U
+#define PLAN_TIE_MM             40      /* edges this alike: a tie        */
+#define ROOM_TIE_MM             15U     /* back-offs this alike: a tie    */
 #define BYPASS_ANGLE_DEG        60U
 #define SIN60                   0.8660254f
 #define TAN30                   0.5773503f
@@ -60,6 +62,11 @@
 #define REJOIN_CENTRE_ERR       25      /* of +-127: sensors over the line  */
 #define REJOIN_TRIM_MM          5       /* closer than this: no correction */
 #define REJOIN_TURN_MMS         50U     /* slow: the IR row crosses the line */
+#define SONAR_SETTLE_MS         150     /* sweep stopped at the front: let
+                                           the servo come to rest       */
+#define ALIGN_MAX_DEG           15U     /* square up on the line before the
+                                           body scan: at most this far    */
+#define ALIGN_ERR               12      /* of +-127: centred enough       */
 #ifndef LINE_ACCEPT_MM
 #define LINE_ACCEPT_MM          12U     /* 18 mm line at 60 deg = 21 mm;
                                            a 9 mm wide bar = 10 mm       */
@@ -89,6 +96,21 @@
 #define STEADY_BAND_MM          12      /* range unchanged within this   */
 #define STEADY_PINGS            3U      /* ... while moving: the floor   */
 #define GUARD_MM                120U    /* bypass leg: stop if closer */
+#define FOUND_ARM_MM            30U     /* out leg: white this far before
+                                           a line counts (D85)            */
+#define FOUND_POLLS             2U      /* black this many polls in a row */
+#define FOUND_MIN_DEG           5U      /* turning onto a found line      */
+#define FOUND_MAX_DEG           150U
+#define FOUND_TURN_MMS          50U
+#define PING_EVERY              4U      /* leg: a ping every 4th 20 ms poll */
+#define MAX_HITS                32U     /* obstacle points kept for the leg check */
+#ifndef LEG_CLEAR_MM
+#define LEG_CLEAR_MM            40      /* out-leg: body side to any hit  */
+#endif
+#define MERGE_MM                60      /* side return this near an edge,
+                                           within the depth: the obstacle */
+#define LEG_REVERSE_MAX_MM      300U    /* back off at most this for room */
+#define COS60                   0.5f
 #define GUARD_PINGS             115U    /* ~8 s at one ping per 70 ms */
 
 typedef struct
@@ -123,6 +145,9 @@ typedef struct
     bool          b_approach;   /* last approach verdict             */
     bool          b_in_cal;     /* in S0/S1: profile cleared once     */
     uint16_t      line_odom;    /* odometer when the line was seen   */
+    int16_t       hit_x[MAX_HITS];  /* body-scan hits, mm from the axle: */
+    int16_t       hit_y[MAX_HITS];  /* x ahead, y left (D81)            */
+    uint32_t      n_hits;
 } obstacle_ctx_t;
 
 static obstacle_ctx_t g_oc;
@@ -233,41 +258,6 @@ move (uint32_t cmd, uint32_t arg)
                     MOTION_TIMEOUT_MS);
     (void)tk_clr_flg(flg_sys, ~FLG_MOTION_DONE);
     return ((E_OK == er) && (0U == (ptn & FLG_ESTOP)));
-}
-
-/* A forward bypass leg with the sonar (centred) watching ahead.  The
-   scan samples only a few angles, so an object between two of them can
-   sit on the planned path; stopping short turns that into a blocked
-   bypass (reverse, retry, BYPASS_FAIL) instead of a collision. */
-static bool
-guarded_forward (uint32_t mm)
-{
-    UINT     ptn = 0U;
-    uint32_t idx;
-
-    (void)tk_clr_flg(flg_sys, ~FLG_MOTION_DONE);
-    if (E_OK != motion_request(MREQ_FORWARD, mm, MREQ_SRC_T5))
-    {
-        return (false);
-    }
-    for (idx = 0U; idx < GUARD_PINGS; idx++)
-    {
-        uint16_t const range = ping();      /* paced at 70 ms */
-
-        if (E_OK == tk_wai_flg(flg_sys, FLG_MOTION_DONE | FLG_ESTOP,
-                               TWF_ORW, &ptn, TMO_POL))
-        {
-            (void)tk_clr_flg(flg_sys, ~FLG_MOTION_DONE);
-            return (0U == (ptn & FLG_ESTOP));
-        }
-        if (range < GUARD_MM)
-        {
-            tm_printf((UB *)"T5: bypass leg blocked at %d mm\n", (INT)range);
-            (void)move(MREQ_STOP, 0U);
-            return (false);
-        }
-    }
-    return (false);
 }
 
 /* ------------------------------------------------------------------ */
@@ -522,14 +512,14 @@ profile (void)
 
 #endif /* SERVO_SCAN */
 
+static uint32_t leg_room(uint32_t side, uint32_t leg_mm);
+static float    side_shift(uint32_t side);
+
 /* O5: continue, left, right, or reverse-and-reattempt. */
 static uint32_t
 plan (void)
 {
     int32_t const half_path = (int32_t)((ROBOT_WIDTH_MM / 2U) + MARGIN_MM);
-    uint32_t const need = ROBOT_WIDTH_MM + (2U * MARGIN_MM);
-    bool const b_left = (g_oc.clear_left >= need);
-    bool const b_right = (g_oc.clear_right >= need);
     uint32_t decision = PLAN_REVERSE;
 
     set_scan_state(SCAN_PLAN);
@@ -546,39 +536,57 @@ plan (void)
            if still blocked. */
         decision = PLAN_REVERSE;
     }
-    else if (b_left && b_right)
+    else
     {
-        /* Both free: the shorter way round, i.e. past the edge nearer the
-           line (an obstacle sitting left of the line is passed on the
-           right).  Clearance only breaks a tie. */
+        /* The side the obstacle sticks out less: an obstacle sitting
+           mostly left of the line is passed on the right, and the other
+           way round (owner 2026-11-23, D84).  Side echoes only break a
+           tie: the sonar guard on each bypass leg stops the car if
+           something real is in the way.  Before, an echo past one edge
+           (often the obstacle's own side face) sent the car the long way
+           round every time. */
         int32_t const via_left = g_oc.y_left;
         int32_t const via_right = -g_oc.y_right;
 
-        if ((via_right + (int32_t)SIDE_TIE_MM) < via_left)
+        if ((via_right + (int32_t)PLAN_TIE_MM) < via_left)
         {
             decision = PLAN_RIGHT;
         }
-        else if ((via_left + (int32_t)SIDE_TIE_MM) < via_right)
+        else if ((via_left + (int32_t)PLAN_TIE_MM) < via_right)
         {
             decision = PLAN_LEFT;
         }
         else
         {
-            decision = ((g_oc.clear_right > (g_oc.clear_left + SIDE_TIE_MM)) ?
-                        PLAN_RIGHT : PLAN_LEFT);
+            /* About as wide each side: the side whose part is further
+               away, i.e. needs less backing off for the first leg (real
+               car 16:08: edges L178 R-184, the left half nearer; it went
+               left after backing 126 mm and the leg was blocked; right
+               needed 86 mm, D84).  Then side clearance. */
+            uint32_t const room_l =
+                leg_room(PLAN_LEFT, (uint32_t)(side_shift(PLAN_LEFT) / SIN60));
+            uint32_t const room_r =
+                leg_room(PLAN_RIGHT, (uint32_t)(side_shift(PLAN_RIGHT) / SIN60));
+
+            if ((room_r + ROOM_TIE_MM) < room_l)
+            {
+                decision = PLAN_RIGHT;
+            }
+            else if ((room_l + ROOM_TIE_MM) < room_r)
+            {
+                decision = PLAN_LEFT;
+            }
+            else
+            {
+                decision = (g_oc.clear_right >
+                            (g_oc.clear_left + SIDE_TIE_MM)) ?
+                           PLAN_RIGHT : PLAN_LEFT;
+            }
+            tm_printf((UB *)"T5: sides alike (L%d R%d mm): back-off L%d R%d"
+                      " -> %s\n", (INT)via_left, (INT)via_right,
+                      (INT)room_l, (INT)room_r,
+                      (PLAN_LEFT == decision) ? "left" : "right");
         }
-    }
-    else if (b_left)
-    {
-        decision = PLAN_LEFT;
-    }
-    else if (b_right)
-    {
-        decision = PLAN_RIGHT;
-    }
-    else
-    {
-        decision = PLAN_REVERSE;
     }
 
     g_oc.plan = decision;
@@ -775,18 +783,336 @@ turn_until_line (uint32_t cmd, uint32_t back)
     }
 }
 
-/* O6-O9 for one side; true once the line is reacquired and aligned. */
-static bool
-bypass (uint32_t side)
+/* How far to back off so the first bypass leg clears every point the
+   body scan hit (D81).  The leg leaves the axle at 60 deg to the side;
+   a point (x ahead, y toward that side) lies d = x sin60 - y cos60 from
+   the leg's centre line, and each mm reversed adds sin60 to that.  The
+   closest range alone is not enough: an obstacle off to one side is much
+   nearer in x at its far edge than straight ahead (real car 2026-11-23:
+   a hit at 57 deg, 199 mm was 141 mm ahead, and the leg to that side
+   passed 13 mm from it, into the box).  Each point is widened by half
+   the 15 deg beam at its range. */
+static uint32_t
+leg_room (uint32_t side, uint32_t leg_mm)
 {
-    uint32_t const away = (PLAN_LEFT == side) ? MREQ_TURN_LEFT
-                                              : MREQ_TURN_RIGHT;
-    uint32_t const back = (PLAN_LEFT == side) ? MREQ_TURN_RIGHT
-                                              : MREQ_TURN_LEFT;
-    int32_t        edge = (PLAN_LEFT == side) ? g_oc.y_left : -g_oc.y_right;
-    float          shift;
-    float          along;
-    bool           b_found = false;
+    float const sgn = (PLAN_LEFT == side) ? 1.0f : -1.0f;
+    float const half = (float)(ROBOT_WIDTH_MM / 2U) + (float)LEG_CLEAR_MM;
+    float       back = 0.0f;
+    uint32_t    idx;
+
+    for (idx = 0U; idx < g_oc.n_hits; idx++)
+    {
+        float const x = (float)g_oc.hit_x[idx];
+        float const y = sgn * (float)g_oc.hit_y[idx];   /* + = that side */
+        float const r = app_sqrtf((x * x) + (y * y));
+        float const t = (x * COS60) + (y * SIN60);      /* along the leg */
+        float const d = (x * SIN60) - (y * COS60);      /* across it     */
+        float const need = half + (r * TAN_HALF_BEAM);
+
+        if ((t > -(float)ROBOT_LENGTH_MM) &&
+            (t < ((float)leg_mm + (float)ROBOT_LENGTH_MM)) &&
+            (d < need))
+        {
+            float const b = (need - d) / SIN60;
+
+            if (b > back)
+            {
+                back = b;
+            }
+        }
+    }
+    return ((uint32_t)(back + 0.5f));
+}
+
+/* ---- D85: a line met anywhere on the detour is followed ---- */
+
+/* Heading since the bypass began (deg, + = left), from the encoders. */
+static uint16_t g_byp_enc_l;
+static uint16_t g_byp_enc_r;
+
+static void
+byp_mark (void)
+{
+    g_byp_enc_l = g_enc_left;
+    g_byp_enc_r = g_enc_right;
+}
+
+static float
+byp_heading (void)
+{
+    int32_t const dl = (int32_t)(int16_t)(uint16_t)(g_enc_left - g_byp_enc_l);
+    int32_t const dr = (int32_t)(int16_t)(uint16_t)(g_enc_right - g_byp_enc_r);
+    float const   mm = (APP_PI_F * MOTION_WHEEL_DIA_MM) / MOTION_EDGES_PER_REV;
+
+    return (((float)(dr - dl) * mm / MOTION_TRACK_MM) * (180.0f / APP_PI_F));
+}
+
+#define LEG_DONE    0U
+#define LEG_LINE    1U
+#define LEG_FAIL    2U
+#define SQUARE_MM   8U      /* both sensors within this: a square crossing */
+#define ALONG_MM    15U     /* one sensor black this far: line alongside   */
+
+static uint32_t g_found_turn;   /* which way to turn onto a found line */
+
+/* Which way to turn onto a line found during an in-place turn, or met
+   square on: back toward the course direction; already along it (within
+   15 deg), toward the detour side, where a course curving into the
+   detour goes. */
+static uint32_t
+course_turn (uint32_t away)
+{
+    float const h = byp_heading();
+
+    if ((h < 15.0f) && (h > -15.0f))
+    {
+        return (away);
+    }
+    return ((h > 0.0f) ? MREQ_TURN_RIGHT : MREQ_TURN_LEFT);
+}
+
+/* One bypass leg (a forward leg or an in-place turn) with the IR row
+   watched for a line (D85).  Nothing counts until the row has seen white
+   (both sensors) for arm_mm, so the line the car starts on is not taken
+   for a new one.  Forward legs: a line is the two sensors crossing it
+   (the second one says which way it runs ahead: turn toward that side;
+   both together, square on: course_turn()) or one sensor black for
+   ALONG_MM (a line alongside: turn toward it).  Turns: a sensor black for
+   FOUND_POLLS polls; then course_turn().  Forward legs keep the sonar
+   guard (closer than GUARD_MM: blocked).  A line stops the car there. */
+static uint32_t
+leg (uint32_t cmd, uint32_t arg, uint32_t arm_mm, uint32_t away,
+     char const * p_name)
+{
+    bool const b_fwd = (MREQ_FORWARD == cmd);
+    uint16_t   white_from = odom_now_mm();
+    bool       b_white = false;
+    bool       b_armed = false;
+    bool       b_l = false;         /* each sensor seen black, and where */
+    bool       b_r = false;
+    uint16_t   at_l = 0U;
+    uint16_t   at_r = 0U;
+    uint16_t   run_from = 0U;       /* one sensor black since         */
+    int32_t    run_side = 0;
+    uint32_t   black = 0U;
+    uint32_t   poll = 0U;
+    uint32_t   waited = 0U;
+    UINT       ptn = 0U;
+    ER         er;
+
+    (void)tk_clr_flg(flg_sys, ~FLG_MOTION_DONE);
+    if (E_OK != motion_request(cmd, arg, MREQ_SRC_T5))
+    {
+        return (LEG_FAIL);
+    }
+    for (;;)
+    {
+        bool     b_found = false;
+        uint16_t const now = odom_now_mm();
+
+        er = tk_wai_flg(flg_sys, FLG_MOTION_DONE | FLG_ESTOP, TWF_ORW, &ptn,
+                        POLL_MS);
+        if ((E_OK == er) && (0U != (ptn & FLG_ESTOP)))
+        {
+            return (LEG_FAIL);
+        }
+        if (E_OK == er)
+        {
+            (void)tk_clr_flg(flg_sys, ~FLG_MOTION_DONE);
+            return (LEG_DONE);
+        }
+        waited += (uint32_t)POLL_MS;
+        if (waited > (uint32_t)MOTION_TIMEOUT_MS)
+        {
+            (void)move(MREQ_STOP, 0U);
+            return (LEG_FAIL);
+        }
+        {
+            uint32_t const line = g_line_word;
+            bool const     b_black = (0U != bits_get(line, LINE_BLACK_SHIFT, 1U));
+            int32_t const  err = bits_to_signed(bits_get(line, LINE_ERR_SHIFT,
+                                                         LINE_ERR_BITS),
+                                                LINE_ERR_BITS);
+
+            if (!b_black)
+            {
+                black = 0U;
+                run_side = 0;
+                if (!b_white)
+                {
+                    b_white = true;
+                    white_from = now;
+                }
+                if (!b_armed && (odom_delta_mm(now, white_from) >= arm_mm))
+                {
+                    b_armed = true;
+                }
+            }
+            else if (b_armed)
+            {
+                int32_t const side = (err > 0) ? 1 : ((err < 0) ? -1 : 0);
+
+                b_white = false;
+                black++;
+                if ((1 == side) && !b_l) { b_l = true; at_l = now; }
+                if ((-1 == side) && !b_r) { b_r = true; at_r = now; }
+                if (0 == side) { if (!b_l) { b_l = true; at_l = now; }
+                                 if (!b_r) { b_r = true; at_r = now; } }
+                if (side != run_side) { run_side = side; run_from = now; }
+
+                if (!b_fwd)
+                {
+                    if (black >= FOUND_POLLS)
+                    {
+                        g_found_turn = course_turn(away);
+                        g_oc.line_odom = now;
+                        b_found = true;
+                    }
+                }
+                else if (b_l && b_r)
+                {
+                    bool const     b_l_later = (odom_delta_mm(at_l, at_r) < 0x8000U);
+                    uint32_t const gap = b_l_later ? odom_delta_mm(at_l, at_r)
+                                                   : odom_delta_mm(at_r, at_l);
+
+                    g_found_turn = (gap <= SQUARE_MM) ? course_turn(away) :
+                                   (b_l_later ? MREQ_TURN_LEFT : MREQ_TURN_RIGHT);
+                    g_oc.line_odom = b_l_later ? (uint16_t)(at_r + (gap / 2U))
+                                               : (uint16_t)(at_l + (gap / 2U));
+                    b_found = true;
+                }
+                else if ((0 != run_side) &&
+                         (odom_delta_mm(now, run_from) >= ALONG_MM))
+                {
+                    g_found_turn = (run_side > 0) ? MREQ_TURN_LEFT
+                                                  : MREQ_TURN_RIGHT;
+                    g_oc.line_odom = now;
+                    b_found = true;
+                }
+                else
+                {
+                    /* Not decided yet. */
+                }
+            }
+            else
+            {
+                b_white = false;
+            }
+        }
+        if (b_found)
+        {
+            (void)move(MREQ_STOP, 0U);
+            tm_printf((UB *)"T5: line found on the %s, %d deg from the"
+                      " course: turning %s onto it\n", p_name,
+                      (INT)byp_heading(),
+                      (MREQ_TURN_LEFT == g_found_turn) ? "left" : "right");
+            return (LEG_LINE);
+        }
+        if (b_fwd && (0U == (++poll % PING_EVERY)))
+        {
+            uint16_t const range = ping();
+
+            if (range < GUARD_MM)
+            {
+                tm_printf((UB *)"T5: bypass leg blocked at %d mm\n",
+                          (INT)range);
+                (void)move(MREQ_STOP, 0U);
+                return (LEG_FAIL);
+            }
+        }
+    }
+}
+
+/* Put the axle where the IR row saw the line, allowing for how far the
+   car rolled before it stopped. */
+static bool
+axle_onto_line (void)
+{
+    int32_t const rolled = (int32_t)odom_delta_mm(odom_now_mm(),
+                                                  g_oc.line_odom);
+    int32_t const fwd = (int32_t)LINE_SENSOR_AHEAD_MM - rolled;
+
+    tm_printf((UB *)"T5: line seen, rolled %d mm past: %s %d mm to put"
+              " the axle on it\n", (INT)rolled,
+              (UB *)((fwd >= 0) ? "forward" : "back"),
+              (INT)((fwd >= 0) ? fwd : -fwd));
+    if (fwd > REJOIN_TRIM_MM)
+    {
+        return (move(MREQ_FORWARD, (uint32_t)fwd));
+    }
+    if (fwd < -REJOIN_TRIM_MM)
+    {
+        return (move(MREQ_BACKWARD, (uint32_t)(-fwd)));
+    }
+    return (true);
+}
+
+/* A line met on the detour (D85): axle onto it, then turn the way leg()
+   chose until the IR row is over it, and follow it.  Not centred within
+   FOUND_MAX_DEG: hand over anyway; line following searches from there. */
+static bool
+follow_found_line (void)
+{
+    uint32_t const cmd = g_found_turn;
+    int32_t        prev = 0;
+    UINT           ptn = 0U;
+    ER             er;
+    uint16_t       l0;
+    uint16_t       r0;
+
+    set_scan_state(SCAN_REACQUIRE);
+    if (!axle_onto_line() || !post(MREQ_SET_SPEED, FOUND_TURN_MMS))
+    {
+        return (false);
+    }
+    l0 = g_enc_left;
+    r0 = g_enc_right;
+    (void)tk_clr_flg(flg_sys, ~FLG_MOTION_DONE);
+    if (E_OK != motion_request(cmd, FOUND_MAX_DEG, MREQ_SRC_T5))
+    {
+        return (false);
+    }
+    for (;;)
+    {
+        er = tk_wai_flg(flg_sys, FLG_MOTION_DONE | FLG_ESTOP, TWF_ORW, &ptn,
+                        POLL_MS);
+        if ((E_OK == er) && (0U != (ptn & FLG_ESTOP)))
+        {
+            return (false);
+        }
+        if (E_OK == er)
+        {
+            (void)tk_clr_flg(flg_sys, ~FLG_MOTION_DONE);
+            tm_printf((UB *)"T5: found line not centred within %d deg:"
+                      " handing over to line following\n",
+                      (INT)FOUND_MAX_DEG);
+            break;
+        }
+        {
+            int32_t const dl = (int32_t)(int16_t)(uint16_t)(g_enc_left - l0);
+            int32_t const dr = (int32_t)(int16_t)(uint16_t)(g_enc_right - r0);
+            float const   turned = app_fabsf((float)(dr - dl) *
+                ((APP_PI_F * MOTION_WHEEL_DIA_MM) / MOTION_EDGES_PER_REV) /
+                MOTION_TRACK_MM * (180.0f / APP_PI_F));
+
+            if (line_centred(&prev) && (turned >= (float)FOUND_MIN_DEG))
+            {
+                tm_printf((UB *)"T5: turned %d deg onto the found line\n",
+                          (INT)turned);
+                (void)move(MREQ_STOP, 0U);
+                break;
+            }
+        }
+    }
+    return (post(MREQ_SET_SPEED, SPEED_FOLLOW));
+}
+
+/* Sideways distance of the first leg to pass that side of the obstacle. */
+static float
+side_shift (uint32_t side)
+{
+    int32_t edge = (PLAN_LEFT == side) ? g_oc.y_left : -g_oc.y_right;
+    float   shift;
 
     if (edge < 0)
     {
@@ -800,6 +1126,21 @@ bypass (uint32_t side)
            less certain: pass wider. */
         shift += (float)FLOOR_EXTRA_MM;
     }
+    return (shift);
+}
+
+/* O6-O9 for one side; true once the line is reacquired and aligned. */
+static bool
+bypass (uint32_t side)
+{
+    uint32_t const away = (PLAN_LEFT == side) ? MREQ_TURN_LEFT
+                                              : MREQ_TURN_RIGHT;
+    uint32_t const back = (PLAN_LEFT == side) ? MREQ_TURN_RIGHT
+                                              : MREQ_TURN_LEFT;
+    float const    shift = side_shift(side);
+    float          along;
+    bool           b_found = false;
+
     along = ((float)g_oc.closest + (float)ROBOT_US_AHEAD_MM +
              (float)g_oc.width + (float)ROBOT_LENGTH_MM + (float)MARGIN_MM) -
             (shift * TAN30);    /* leg 1 already gained this */
@@ -810,36 +1151,75 @@ bypass (uint32_t side)
 
     /* Room to turn: a low sonar sees the obstacle late and the car can
        stop ~80 mm short; turning on the spot there swings a front corner
-       into it. */
-    if (g_oc.closest < TURN_ROOM_MM)
+       into it.  And room for the first leg to clear the obstacle's near
+       corner on that side (D81). */
     {
-        set_scan_state(SCAN_REVERSE);
-        if (!move(MREQ_BACKWARD, TURN_ROOM_MM - g_oc.closest))
+        uint32_t rev = (g_oc.closest < TURN_ROOM_MM) ?
+                       (TURN_ROOM_MM - g_oc.closest) : 0U;
+        uint32_t const leg = leg_room(side, (uint32_t)(shift / SIN60));
+
+        if (leg > rev)
+        {
+            tm_printf((UB *)"T5: first leg %s would pass too close to the"
+                      " obstacle: back off %d mm first\n",
+                      (PLAN_LEFT == side) ? "left" : "right", (INT)leg);
+            rev = leg;
+        }
+        if (rev > LEG_REVERSE_MAX_MM)
+        {
+            rev = LEG_REVERSE_MAX_MM;
+        }
+        if (rev > 0U)
+        {
+            set_scan_state(SCAN_REVERSE);
+            if (!move(MREQ_BACKWARD, rev))
+            {
+                return (false);
+            }
+            g_oc.closest += rev;
+            along += (float)rev;
+        }
+    }
+
+    /* Every leg after the first turn watches for a line (D85): one met on
+       the way (the course curving into the detour, or another line) is
+       followed instead of finishing the arc. */
+    set_scan_state(SCAN_OUT);
+    (void)servo_move(SERVO_CENTRE_DEG);
+    byp_mark();
+    if (!post(MREQ_SET_SPEED, SPEED_FOLLOW) ||
+        !move(away, BYPASS_ANGLE_DEG))
+    {
+        return (false);
+    }
+    {
+        uint32_t r = leg(MREQ_FORWARD, (uint32_t)(shift / SIN60),
+                         FOUND_ARM_MM, away, "first leg");
+
+        if (LEG_DONE == r)
+        {
+            set_scan_state(SCAN_ALONG);
+            r = leg(back, BYPASS_ANGLE_DEG, 0U, away, "turn along");
+        }
+        if (LEG_DONE == r)
+        {
+            r = leg(MREQ_FORWARD, (uint32_t)along, 0U, away, "leg along");
+        }
+        if (LEG_DONE == r)
+        {
+            set_scan_state(SCAN_BACK);
+            r = leg(back, BYPASS_ANGLE_DEG, 0U, away, "turn back");
+        }
+        if (LEG_LINE == r)
+        {
+            return (follow_found_line());
+        }
+        if (LEG_DONE != r)
         {
             return (false);
         }
-        g_oc.closest = TURN_ROOM_MM;
     }
-
-    set_scan_state(SCAN_OUT);
-    (void)servo_move(SERVO_CENTRE_DEG);
-    if (!post(MREQ_SET_SPEED, SPEED_FOLLOW) ||
-        !move(away, BYPASS_ANGLE_DEG) ||
-        !guarded_forward((uint32_t)(shift / SIN60)))
-    {
-        return (false);
-    }
-
-    set_scan_state(SCAN_ALONG);
-    if (!move(back, BYPASS_ANGLE_DEG) ||
-        !guarded_forward((uint32_t)along))
-    {
-        return (false);
-    }
-
-    set_scan_state(SCAN_BACK);
-    if (!move(back, BYPASS_ANGLE_DEG) ||
-        !post(MREQ_SET_SPEED, SPEED_CREEP) ||
+    if (!post(MREQ_SET_SPEED, SPEED_CREEP) ||
         !creep_until_line((uint32_t)(shift / SIN60), &b_found))
     {
         return (false);
@@ -876,36 +1256,11 @@ bypass (uint32_t side)
         return (post(MREQ_SET_SPEED, SPEED_FOLLOW));
     }
 
-    /* Put the axle where the IR row saw the line, allowing for how far
-       the car rolled before it stopped (not modelled: on the real car it
-       carried on past the line), then turn back along it. */
+    /* Put the axle where the IR row saw the line (not modelled: on the
+       real car it carried on past the line), then turn back along it. */
+    if (!axle_onto_line())
     {
-        int32_t const rolled = (int32_t)odom_delta_mm(odom_now_mm(),
-                                                      g_oc.line_odom);
-        int32_t const fwd = (int32_t)LINE_SENSOR_AHEAD_MM - rolled;
-
-        tm_printf((UB *)"T5: line seen, rolled %d mm past: %s %d mm to put"
-                  " the axle on it\n", (INT)rolled,
-                  (UB *)((fwd >= 0) ? "forward" : "back"),
-                  (INT)((fwd >= 0) ? fwd : -fwd));
-        if (fwd > REJOIN_TRIM_MM)
-        {
-            if (!move(MREQ_FORWARD, (uint32_t)fwd))
-            {
-                return (false);
-            }
-        }
-        else if (fwd < -REJOIN_TRIM_MM)
-        {
-            if (!move(MREQ_BACKWARD, (uint32_t)(-fwd)))
-            {
-                return (false);
-            }
-        }
-        else
-        {
-            /* Close enough. */
-        }
+        return (false);
     }
     return (turn_until_line(away, back) &&
             post(MREQ_SET_SPEED, SPEED_FOLLOW));
@@ -1071,6 +1426,84 @@ body_edge (body_sample_t const * p_s, uint32_t first, uint32_t last,
             ((float)sign * (float)closest * TAN_HALF_BEAM));
 }
 
+/* Square the car up on the line before the body scan (D80): the scan's
+   0 deg is taken as the line's heading and the bypass is planned from
+   it, but the car stops wherever the steering left it (2026-11-23: line
+   error -38 at the stop, obstacle read 30 deg off to one side).  The IR
+   row is ahead of the axle, so turning in place sweeps it across the
+   line; stop when it is centred or the error changes sign.  Nothing
+   done if the line is not seen. */
+static void
+align_on_line (void)
+{
+    uint32_t const line = g_line_word;
+    int32_t const  err0 = bits_to_signed(bits_get(line, LINE_ERR_SHIFT,
+                                                  LINE_ERR_BITS),
+                                         LINE_ERR_BITS);
+    UINT           ptn = 0U;
+    ER             er;
+
+    if ((err0 <= ALIGN_ERR) && (err0 >= -ALIGN_ERR))
+    {
+        tm_printf((UB *)"T5: centred on the line (err %d), scanning\n",
+                  (INT)err0);
+        return;
+    }
+    /* Only a sensor actually on the line says which way: with the line
+       outside both sensors the error is the last one remembered (tests/sim
+       obstacle_skew turned the wrong way on it). */
+    if ((LSTATE_TRACK != bits_get(line, LINE_STATE_SHIFT, LINE_STATE_BITS)) ||
+        (0U == bits_get(line, LINE_BLACK_SHIFT, 1U)))
+    {
+        tm_printf((UB *)"T5: line not under a sensor (err %d): scanning"
+                  " as stopped\n", (INT)err0);
+        return;
+    }
+    if (!post(MREQ_SET_SPEED, REJOIN_TURN_MMS))
+    {
+        return;
+    }
+    body_mark();
+    (void)tk_clr_flg(flg_sys, ~FLG_MOTION_DONE);
+    if (E_OK != motion_request((err0 > 0) ? MREQ_TURN_LEFT : MREQ_TURN_RIGHT,
+                               ALIGN_MAX_DEG, MREQ_SRC_T5))
+    {
+        (void)post(MREQ_SET_SPEED, SPEED_FOLLOW);
+        return;
+    }
+    for (;;)
+    {
+        er = tk_wai_flg(flg_sys, FLG_MOTION_DONE | FLG_ESTOP, TWF_ORW, &ptn,
+                        POLL_MS);
+        if (E_OK == er)
+        {
+            (void)tk_clr_flg(flg_sys, ~FLG_MOTION_DONE);
+            break;                          /* limit reached, or ESTOP */
+        }
+        {
+            uint32_t const now = g_line_word;
+            int32_t const  err = bits_to_signed(bits_get(now, LINE_ERR_SHIFT,
+                                                         LINE_ERR_BITS),
+                                                LINE_ERR_BITS);
+
+            /* Centred: a small error, the error changed sign, or (line
+               between the sensors) neither sensor sees it any more. */
+            if (((err <= ALIGN_ERR) && (err >= -ALIGN_ERR)) ||
+                ((err > 0) != (err0 > 0)) ||
+                (0U == bits_get(now, LINE_BLACK_SHIFT, 1U)))
+            {
+                (void)move(MREQ_STOP, 0U);
+                break;
+            }
+        }
+    }
+    tm_printf((UB *)"T5: centred on the line: err %d, turned %d deg\n",
+              (INT)bits_to_signed(bits_get(g_line_word, LINE_ERR_SHIFT,
+                                           LINE_ERR_BITS), LINE_ERR_BITS),
+              (INT)body_heading());
+    (void)post(MREQ_SET_SPEED, SPEED_FOLLOW);
+}
+
 static bool
 fixed_profile (void)
 {
@@ -1129,6 +1562,20 @@ fixed_profile (void)
        headings the encoders say the car reached (the nominal 4 degree
        steps were really 6-7, which made the first attempt read a 100 mm
        box as 29 mm and clip it), pulled in by half the 15 degree beam. */
+    /* Every point on the obstacle, for the out-leg check in bypass(). */
+    g_oc.n_hits = 0U;
+    for (idx = 0U; (idx < n) && (g_oc.n_hits < MAX_HITS); idx++)
+    {
+        if (body_hit(s[idx].range, closest))
+        {
+            float const d = ahead + (float)open_range(s[idx].range);
+            float const a = (float)s[idx].deg * DEG_TO_RAD;
+
+            g_oc.hit_x[g_oc.n_hits] = (int16_t)(d * app_cosf(a));
+            g_oc.hit_y[g_oc.n_hits] = (int16_t)(d * app_sinf(a));
+            g_oc.n_hits++;
+        }
+    }
     y_l = body_edge(s, n_right, n, closest, &b_open_l);
     y_r = body_edge(s, 1U, n_right, closest, &b_open_r);
     if (y_l < y_r)
@@ -1139,25 +1586,69 @@ fixed_profile (void)
         y_r = mid - 10.0f;
     }
 
+    /* Clearance each side (D82-D84).  Returns within the obstacle's depth
+       (depth = width, A10, plus a margin) and within MERGE_MM of an edge
+       are the obstacle itself (its side or back corner through the 15 deg
+       beam): the edge moves out to them.  What is left is clearance,
+       which only breaks a tie in plan() (a wall beside a centred box,
+       tests/sim obstacle_wall).  Real car 2026-11-23: echoes just past the right edge (box
+       mostly left) made the right 'not clear' four runs in a row and the
+       car went the long way left every time. */
     g_oc.clear_left = CLEAR_NONE;
     g_oc.clear_right = CLEAR_NONE;
-    for (idx = 0U; idx < n; idx++)
     {
-        uint32_t const r = open_range(s[idx].range);
-        float const    y = (ahead + (float)r) *
-                           app_sinf((float)s[idx].deg * DEG_TO_RAD);
+        float const reach = ahead + (float)closest + (y_l - y_r) +
+                            (float)MARGIN_MM;
+        uint32_t    pass;
 
-        if ((r >= CLEAR_LOOK_MM) || body_hit(s[idx].range, closest))
+        for (pass = 0U; pass < 3U; pass++)
         {
-            continue;
-        }
-        if ((y > y_l) && ((uint32_t)(y - y_l) < g_oc.clear_left))
-        {
-            g_oc.clear_left = (uint32_t)(y - y_l);
-        }
-        if ((y < y_r) && ((uint32_t)(y_r - y) < g_oc.clear_right))
-        {
-            g_oc.clear_right = (uint32_t)(y_r - y);
+            for (idx = 0U; idx < n; idx++)
+            {
+                uint32_t const r = open_range(s[idx].range);
+                float const    a = (float)s[idx].deg * DEG_TO_RAD;
+                float const    y = (ahead + (float)r) * app_sinf(a);
+                float const    x = (ahead + (float)r) * app_cosf(a);
+                bool           b_merge = false;
+
+                if ((r >= CLEAR_LOOK_MM) || body_hit(s[idx].range, closest))
+                {
+                    continue;
+                }
+                if ((x <= reach) && (y > y_l) && ((y - y_l) < (float)MERGE_MM))
+                {
+                    y_l = y;
+                    b_merge = true;
+                }
+                else if ((x <= reach) && (y < y_r) &&
+                         ((y_r - y) < (float)MERGE_MM))
+                {
+                    y_r = y;
+                    b_merge = true;
+                }
+                else if (2U == pass)
+                {
+                    if ((y > y_l) && ((uint32_t)(y - y_l) < g_oc.clear_left))
+                    {
+                        g_oc.clear_left = (uint32_t)(y - y_l);
+                    }
+                    if ((y < y_r) && ((uint32_t)(y_r - y) < g_oc.clear_right))
+                    {
+                        g_oc.clear_right = (uint32_t)(y_r - y);
+                    }
+                }
+                else
+                {
+                    /* Not near an edge: judged on the last pass. */
+                }
+                if (b_merge && (g_oc.n_hits < MAX_HITS))
+                {
+                    /* Part of the obstacle: the leg check must clear it. */
+                    g_oc.hit_x[g_oc.n_hits] = (int16_t)x;
+                    g_oc.hit_y[g_oc.n_hits] = (int16_t)y;
+                    g_oc.n_hits++;
+                }
+            }
         }
     }
     /* Still on the obstacle at the last step: that edge is further out. */
@@ -1205,10 +1696,19 @@ handle_obstacle (void)
             break;
         }
         servo_sweep(false);     /* brake first, then face front */
+        (void)tk_dly_tsk((RELTIM)SONAR_SETTLE_MS);
+        if (0U == g_oc.retry)
+        {
+            tm_printf((UB *)"T5: sweep stopped, sonar centred\n");
+        }
 
 #if !SERVO_SCAN
         (void)centre;
         (void)min_range;
+        if (0U == g_oc.retry)
+        {
+            align_on_line();    /* sonar and car square on the line */
+        }
         if (!fixed_profile())
         {
             g_oc.plan = PLAN_CONTINUE;      /* gone, or only the floor */

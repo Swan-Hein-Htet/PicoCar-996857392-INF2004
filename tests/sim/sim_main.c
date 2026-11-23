@@ -174,6 +174,11 @@ static int    g_log_bad_stamp;
 static bool   g_log_paused;
 extern int net_bridge_take_log(unsigned char *buf, int size);
 
+/* Junction centre (course cursor) and where the axle was when the turn
+   was done: along-track error of the turn point (D79). */
+static double g_junc_x = -1.0, g_junc_y;
+static double g_turn_x = -1.0, g_turn_y;
+
 static void console(uint64_t t, const char *task, const char *line)
 {
     const char *p;
@@ -183,7 +188,7 @@ static void console(uint64_t t, const char *task, const char *line)
     if (strstr(line, "barcode rejected")) { g_m.n_rejected_bc++; }
     if (strstr(line, "T4: rejected")) { g_m.n_t4_rejected++; }
     if (strstr(line, "expired")) { g_m.n_expired++; }
-    if (strstr(line, "executed")) { g_m.n_executed++; }
+    if (strstr(line, "executed")) { g_m.n_executed++; g_turn_x = g_st.x; g_turn_y = g_st.y; }
     if (strstr(line, "T6: barcode map ") && strstr(line, ", set)")) { g_m.n_map_set++; }
     if (strstr(line, "T6: barcode map refused")) { g_m.n_map_refused++; }
     if (strstr(line, "T2: barcode '") && strstr(line, "-> unmapped")) { g_m.n_unmapped++; }
@@ -543,6 +548,7 @@ static void junction_course2(char c, char layout, double before_junction)
        one (layout A left, B right, else straight) leads to the END marker,
        the others stop after 250 mm. */
     c = layout;
+    course_where(&g_junc_x, &g_junc_y);
     if ('A' == c) { course_branch(0.0, 250.0); course_branch(-90.0, 250.0); course_turn(90.0); }
     else if ('B' == c) { course_branch(0.0, 250.0); course_branch(90.0, 250.0); course_turn(-90.0); }
     else { course_branch(90.0, 250.0); course_branch(-90.0, 250.0); }
@@ -1077,8 +1083,20 @@ static void ck_map_invalid(void)
     EXPECT(2 == g_m.n_map_refused, "%d of 2 bad maps refused", g_m.n_map_refused);
     EXPECT(0 == g_m.n_map_set, "a bad map was applied");
 }
-static void ck_bc_a(void) { ck_bc('A'); EXPECT(g_st.y > 300.0, "did not turn left (y=%.0f)", g_st.y); }
-static void ck_bc_b(void) { ck_bc('B'); EXPECT(g_st.y < -300.0, "did not turn right (y=%.0f)", g_st.y); }
+static void ck_turn_point(void)
+{
+    if ((g_junc_x >= 0.0) && (g_turn_x >= 0.0))
+    {
+        double const err = g_turn_x - g_junc_x;     /* + = past the centre */
+        note("turned %+.1f mm from the junction centre", err);
+        /* Within 1 cm.  The sim's 4 mm sensor spot sees the bar later
+           than the real car's wider one, so the sim turns ~6 mm past
+           where the real car (1 cm early before D79) now turns. */
+        EXPECT(fabs(err) <= 10.0, "turned %+.1f mm from the junction centre", err);
+    }
+}
+static void ck_bc_a(void) { ck_bc('A'); EXPECT(g_st.y > 300.0, "did not turn left (y=%.0f)", g_st.y); ck_turn_point(); }
+static void ck_bc_b(void) { ck_bc('B'); EXPECT(g_st.y < -300.0, "did not turn right (y=%.0f)", g_st.y); ck_turn_point(); }
 static void ck_bc_c(void) { ck_bc('C'); EXPECT(fabs(g_st.y) < 60.0 && g_st.x > 1000.0, "did not go straight (%.0f,%.0f)", g_st.x, g_st.y); }
 
 /* 9. U-turn: D, then back the way it came to an END marker behind the start. */
@@ -1219,6 +1237,89 @@ static void sc_obst_blocked(void)
 }
 static void sc_obst_corridor(void) { sc_obst(0.0, 100.0, 2); }
 static void sc_obst_side(void) { sc_obst(260.0, 100.0, 0); }
+/* The line steps sideways just before the box: the car stops crooked and
+   must square up on the line before the body scan (D80). */
+static void sc_obst_skew(void)
+{
+    g_obst_true_w = 100.0;
+    base_course(); course_straight(500.0);
+    course_shift(16.0); course_straight(20.0);
+    course_obstacle(150.0, 0.0, 100.0, 100.0);
+    course_straight(1200.0); finish_line();
+}
+/* The real car 2026-11-23 (D81): a 220 mm box mostly left of the line,
+   something on the right further on, so the long way round (left) is
+   the only one; the first leg must back off to clear the box's corner. */
+#ifndef OBST_LONG_NEAR
+#define OBST_LONG_NEAR 80.0
+#endif
+static void sc_obst_long(void)
+{
+    g_obst_true_w = 220.0;
+    base_course(); course_straight(500.0);
+    course_obstacle(150.0, -90.0, 220.0, 120.0);
+    course_obstacle(150.0 - OBST_LONG_NEAR, -5.0, 50.0, OBST_LONG_NEAR + 20.0);  /* its left end nearer */
+    course_straight(1200.0); finish_line();
+}
+/* Same box, but the only thing on the right is far beyond it: the short
+   way round (right) is clear and must be taken (D82, real car 15:53). */
+static void sc_obst_far(void)
+{
+    g_obst_true_w = 220.0;
+    base_course(); course_straight(500.0);
+    course_obstacle(150.0, 90.0, 220.0, 120.0);
+    course_obstacle(150.0 - OBST_LONG_NEAR, 170.0, 60.0, OBST_LONG_NEAR + 20.0);
+    course_obstacle(720.0, -210.0, 60.0, 60.0);
+    course_straight(1200.0); finish_line();
+}
+/* A deep box mostly left of the line: the sonar also sees its right
+   side face just past the right edge.  That is the box, not something
+   beside it: pass on the right, the short way (D83, real car 16:00). */
+static void sc_obst_deep(void)
+{
+    g_obst_true_w = 200.0;
+    base_course(); course_straight(500.0);
+    course_obstacle(150.0, 80.0, 200.0, 300.0);
+    course_straight(1200.0); finish_line();
+}
+/* About as wide each side, the left half nearer (real car 16:08, D84):
+   the right needs less backing off, so pass on the right. */
+static void sc_obst_stagger(void)
+{
+    g_obst_true_w = 360.0;
+    base_course(); course_straight(500.0);
+    course_obstacle(150.0, 90.0, 180.0, 120.0);
+    course_obstacle(200.0, -90.0, 180.0, 120.0);
+    course_straight(1200.0); finish_line();
+}
+/* D85: the course curves into the detour behind the box; the car meets
+   it on the detour and follows it instead of finishing the arc. */
+static int g_curve_dir;
+static void sc_obst_curve(int dir)
+{
+    g_curve_dir = dir;
+    g_obst_true_w = 100.0;
+    base_course(); course_straight(500.0);
+    course_obstacle(150.0, 0.0, 100.0, 100.0);
+    course_straight(260.0);
+    course_arc(160.0, dir * 90.0);
+    course_straight(700.0); finish_line();
+}
+static void sc_obst_curve_l(void) { sc_obst_curve(1); }
+static void ck_obst_common(void);
+static void ck_obst_curve(void)
+{
+    ck_obst_common();
+    EXPECT(g_m.n_obstacle_seen >= 1, "obstacle never detected");
+    expect_finished(55.0);
+}
+static void ck_obstacle_short_right(void)
+{
+    ck_obst_common();
+    EXPECT(g_m.n_obstacle_seen >= 1, "obstacle never detected");
+    EXPECT(0U != (g_m.plans_seen & (1U << PLAN_RIGHT)), "box mostly left: expected the short way, right (plans 0x%x)", g_m.plans_seen);
+    expect_finished(45.0);
+}
 static void ck_obst_common(void)
 {
     EXPECT(!g_st.collided, "COLLISION with an obstacle at (%.0f,%.0f)", g_st.x, g_st.y);
@@ -1241,6 +1342,20 @@ static void ck_obst_l(void)
 {
     ck_obst_c();
     EXPECT(0U != (g_m.plans_seen & (1U << PLAN_RIGHT)), "obstacle offset left, bypass should go right (plans 0x%x)", g_m.plans_seen);
+}
+static void ck_obst_long(void)
+{
+    ck_obst_common();
+    EXPECT(g_m.n_obstacle_seen >= 1, "obstacle never detected");
+    EXPECT(0U != (g_m.plans_seen & (1U << PLAN_LEFT)), "expected the bypass on the left (plans 0x%x)", g_m.plans_seen);
+    expect_finished(45.0);
+}
+static void ck_obst_far(void)
+{
+    ck_obst_common();
+    EXPECT(g_m.n_obstacle_seen >= 1, "obstacle never detected");
+    EXPECT(0U != (g_m.plans_seen & (1U << PLAN_RIGHT)), "box mostly left, right side clear: expected the bypass on the right (plans 0x%x)", g_m.plans_seen);
+    expect_finished(45.0);
 }
 static void ck_obst_wall(void)
 {
@@ -1682,6 +1797,12 @@ static const scenario_t g_scenarios[] = {
     { "obstacle_spot", "box on the line, 9 mm line-sensor spot: rejoin stops on the line", sc_obstacle_spot, ck_obst_c, 45.0, 1, true, 0 },
     { "obstacle_spot11", "box on the line, 11 mm line-sensor spot: rejoin stops on the line", sc_obstacle_spot_r, ck_obst_c, 45.0, 1, true, 0 },
     { "obstacle_coast", "box on the line, wheels coast 0.3 s when the motors stop: rejoin still on the line", sc_obstacle_coast, ck_obst_c, 45.0, 1, true, 0 },
+    { "obstacle_skew", "line steps sideways before the box: car squares up on the line, then scans", sc_obst_skew, ck_obst_c, 45.0, 1, true, 0 },
+    { "obstacle_long", "box mostly right of the line, its left end nearer: passed on the left (short way), backing off to clear that corner", sc_obst_long, ck_obst_long, 45.0, 1, true, 0 },
+    { "obstacle_far", "box mostly left of the line, something far beyond on the right: short way round (right)", sc_obst_far, ck_obst_far, 45.0, 1, true, 0 },
+    { "obstacle_deep", "deep box mostly left of the line: its side face is the box, short way round (right)", sc_obst_deep, ck_obstacle_short_right, 45.0, 1, true, 0 },
+    { "obstacle_stagger", "as wide each side, left half nearer: right needs less backing off, pass right", sc_obst_stagger, ck_obstacle_short_right, 45.0, 1, true, 0 },
+    { "obstacle_curve_l", "course curves left behind the box, into a left detour: line met on the detour is followed", sc_obst_curve_l, ck_obst_curve, 55.0, 1, true, 0 },
     { "obstacle_left", "box offset left: bypass right", sc_obst_l, ck_obst_l, 45.0, 1, true, 0 },
     { "obstacle_wall", "box + wall on the left: bypass right", sc_obst_wall, ck_obst_wall, 45.0, 1, true, 0 },
     { "obstacle_boxed","three boxes abreast: reverse, retry, BYPASS_FAIL", sc_obst_blocked, ck_obst_blocked, 50.0, 1, true, FAULT_BYPASS_FAIL },

@@ -6,115 +6,114 @@
 <title>PicoCar Telemetry</title>
 <link rel="stylesheet" href="/theme.css">
 <style>
-:root { --band-a: #DCE0D8; --band-b: #CBD1C8; }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --band-a: #28303A; --band-b: #333D48; } }
-:root[data-theme="dark"] { --band-a: #28303A; --band-b: #333D48; }
+/* Page parts on top of /theme.css (the console's mission-control look). */
+:root { --band-a: rgba(255,255,255,0.07); --band-b: rgba(255,255,255,0.13); }
 
-.view-h { display: flex; align-items: flex-end; gap: 16px; flex-wrap: wrap; margin: 6px 0 16px; }
-.view-h h1 { font-family: var(--display); font-weight: 700; font-size: 40px; line-height: 1; margin: 0; }
-.view-h p { margin: 0; color: var(--ink-2); }
-.stack { display: flex; flex-direction: column; gap: 18px; }
+.view-h { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; margin: 4px 0 20px; }
+.view-h h1 { font-weight: 500; font-size: 20px; letter-spacing: 0.32em; text-transform: uppercase; line-height: 1.2; margin: 0; }
+.view-h p { margin: 0; color: var(--fg-3); font-size: 11px; font-weight: 600; letter-spacing: 0.18em; text-transform: uppercase; }
+.stack { display: flex; flex-direction: column; gap: 16px; }
 
 /* runs summary */
-.summary { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 18px; margin-bottom: 18px; }
-.outbar { display: flex; height: 14px; border-radius: 7px; overflow: hidden; gap: 2px; background: var(--sunk); margin: 6px 0 10px; }
+.summary { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 16px; margin-bottom: 16px; }
+.outbar { display: flex; height: 6px; overflow: hidden; gap: 2px; background: var(--hair); margin: 14px 0 12px; }
 .outbar span { display: block; height: 100%; }
-.outbar span:first-child { border-radius: 7px 0 0 7px; } .outbar span:last-child { border-radius: 0 7px 7px 0; }
-.outkey { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; color: var(--ink-2); }
-.outkey i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; }
-.big { font-family: var(--display); font-weight: 700; font-size: 48px; line-height: 1; font-variant-numeric: tabular-nums; }
-.big small { font-family: var(--body); font-size: 15px; font-weight: 400; color: var(--muted); margin-left: 6px; }
+.outkey { display: flex; gap: 18px; flex-wrap: wrap; font-size: 10.5px; font-weight: 600; letter-spacing: 0.18em; text-transform: uppercase; color: var(--fg-2); }
+.outkey i { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 8px; vertical-align: 1px; }
+.big { font-weight: 200; font-size: 64px; line-height: 1; font-variant-numeric: tabular-nums; }
+.big small { font-size: 11px; font-weight: 600; letter-spacing: 0.2em; text-transform: uppercase; color: var(--fg-3); margin-left: 12px; vertical-align: 0.9em; }
 
-.filters { display: flex; gap: 12px; flex-wrap: wrap; align-items: end; margin-bottom: 12px; }
-.letters { font-family: var(--mono); font-weight: 600; letter-spacing: 0.06em; }
-.idcell { color: var(--muted); font-family: var(--mono); font-size: 12.5px; }
+.filters { display: flex; gap: 18px; flex-wrap: wrap; align-items: end; margin-bottom: 14px; }
+.letters { font-family: var(--mono); font-weight: 600; letter-spacing: 0.12em; color: var(--fg); }
+.idcell { color: var(--fg-3); font-family: var(--mono); font-size: 12px; }
+td b { color: var(--fg); font-weight: 500; }
 
 /* charts */
 .charts { position: relative; }
-.panel { margin-bottom: 8px; }
-.panel-head { display: flex; gap: 14px; align-items: baseline; font-size: 13px; margin-bottom: 2px; }
-.panel-head b { font-family: var(--display); font-size: 16px; font-weight: 600; }
-.key { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
-.key i { display: inline-block; width: 16px; height: 3px; border-radius: 2px; }
+.panel { margin-bottom: 10px; }
+.panel-head { display: flex; gap: 16px; align-items: baseline; margin-bottom: 4px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.18em; text-transform: uppercase; color: var(--fg-3); }
+.panel-head b { color: var(--fg-2); font-weight: 600; letter-spacing: 0.22em; }
+.key { display: inline-flex; align-items: center; gap: 7px; color: var(--fg-3); }
+.key i { display: inline-block; width: 16px; height: 2px; }
 svg.chart { display: block; width: 100%; overflow: visible; }
-svg.chart text { fill: var(--muted); font-size: 11px; font-family: var(--body); }
-svg.chart .grid { stroke: var(--rule); stroke-width: 1; }
-svg.chart .zero { stroke: var(--rule-strong); stroke-width: 1.2; }
-svg.chart .cross { stroke: var(--ink); stroke-width: 1; stroke-dasharray: 3 3; }
-.tip { position: absolute; pointer-events: none; background: var(--panel); border: 1px solid var(--rule-strong);
-  border-radius: var(--r-inner); padding: 9px 11px; font-size: 13px; box-shadow: 0 12px 28px -12px rgba(0,0,0,0.45);
-  min-width: 180px; z-index: 20; display: none; }
-.tip .row { display: flex; align-items: center; gap: 8px; }
-.tip .row strong { font-family: var(--display); font-size: 15px; font-variant-numeric: tabular-nums; min-width: 46px; text-align: right; }
-.tip i { display: inline-block; width: 12px; height: 3px; border-radius: 2px; }
-.tip .t { color: var(--muted); margin-bottom: 4px; }
+svg.chart text { fill: var(--fg-3); font-size: 10px; font-family: var(--body); letter-spacing: 0.08em; }
+svg.chart .grid { stroke: var(--hair); stroke-width: 1; }
+svg.chart .zero { stroke: var(--hair-2); stroke-width: 1; }
+svg.chart .cross { stroke: var(--fg); stroke-width: 1; stroke-dasharray: 2 4; }
+.tip { position: absolute; pointer-events: none; background: rgba(6,8,11,0.92); border: 1px solid var(--hair-2); backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px); padding: 10px 12px; font-size: 12px; min-width: 190px; z-index: 20; display: none; }
+.tip .row { display: flex; align-items: center; gap: 9px; color: var(--fg-2); }
+.tip .row strong { font-weight: 300; font-size: 17px; font-variant-numeric: tabular-nums; min-width: 50px; text-align: right; color: var(--fg); }
+.tip i { display: inline-block; width: 12px; height: 2px; }
+.tip .t { color: var(--fg-3); margin-bottom: 6px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.18em; text-transform: uppercase; }
 
 /* run detail */
-.titlebar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
-.titlebar input.label { font-family: var(--display); font-size: 34px; font-weight: 700; border-color: transparent; background: transparent;
-  padding: 0 6px; flex: 1; min-width: 200px; }
-.titlebar input.label:hover, .titlebar input.label:focus { border-color: var(--rule-strong); background: var(--sunk); }
-.meta { color: var(--muted); margin: 6px 0 18px; font-size: 14px; }
-.confirm { display: none; margin-top: 12px; padding: 12px 14px; border: 1px solid var(--stop); border-radius: var(--r-inner);
-  background: color-mix(in srgb, var(--stop) 8%, transparent); }
+.titlebar { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+.titlebar input.label { font-family: var(--body); font-size: 28px; font-weight: 300; letter-spacing: 0.04em; border: 0; border-bottom: 1px solid transparent;
+  background: transparent; padding: 2px 4px; flex: 1; min-width: 200px; }
+.titlebar input.label:hover, .titlebar input.label:focus { border-bottom-color: var(--hair-2); }
+.meta { color: var(--fg-3); margin: 8px 0 20px; font-size: 11px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; }
+.confirm { display: none; margin-top: 14px; padding: 14px 16px; border: 1px solid var(--red); background: rgba(255,59,48,0.08); color: var(--fg-2); }
 .confirm.show { display: block; }
-.two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; }
+.two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
 .loglist { max-height: 440px; }
-.loglist .console { color: var(--muted); }
-.loglist .t { color: var(--muted); }
-.ev-fault { color: var(--stop); font-weight: 600; }
-.ev-barcode { color: var(--amber); font-weight: 700; }
-.statetimes { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
-.statetimes span { font-size: 13px; padding: 3px 10px; border-radius: 999px; background: var(--sunk); border: 1px solid var(--rule); color: var(--ink-2); }
-.statetimes b { font-family: var(--display); font-weight: 600; margin-left: 4px; color: var(--ink); }
+.loglist .console { color: var(--fg-3); }
+.loglist .t { color: var(--fg-3); }
+.ev-fault { color: var(--red) !important; font-weight: 600; }
+.ev-barcode { color: var(--fg) !important; font-weight: 600; }
+.statetimes { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 18px; }
+.statetimes span { font-size: 10.5px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; padding: 5px 10px; border: 1px solid var(--hair); color: var(--fg-3); }
+.statetimes b { font-weight: 500; margin-left: 6px; color: var(--fg); letter-spacing: 0.06em; }
 textarea { width: 100%; min-height: 84px; resize: vertical; }
 
 /* live */
-.live-head { display: flex; align-items: center; gap: 12px; }
-.pulse { width: 12px; height: 12px; border-radius: 50%; background: var(--rule-strong); flex: none; }
-.pulse.on { background: var(--amber-fill); box-shadow: 0 0 0 0 rgba(242,165,22,0.6); animation: pulse 1.6s infinite; }
-@keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(242,165,22,0.55); } 80%, 100% { box-shadow: 0 0 0 12px rgba(242,165,22,0); } }
+.live-head { display: flex; align-items: center; gap: 14px; }
+.pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--fg-3); flex: none; position: relative; }
+.pulse.on { background: var(--green); box-shadow: 0 0 8px var(--green); }
+.pulse.on::after { content: ""; position: absolute; inset: -1px; border-radius: 50%; border: 1px solid var(--green); animation: ping 2s infinite; }
+@keyframes ping { 0% { transform: scale(0.8); opacity: 0.8; } 100% { transform: scale(3); opacity: 0; } }
 
 /* explore */
 .tables { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; }
-.tcard { text-align: left; cursor: pointer; border: 1px solid var(--rule); background: var(--panel); border-radius: var(--r-outer);
-  padding: 14px 16px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 4px; }
-.tcard[aria-pressed="true"] { border-color: var(--amber-fill); box-shadow: var(--glow), var(--shadow); }
-.tcard b { font-family: var(--display); font-size: 19px; font-weight: 700; }
-.tcard .k { font-family: var(--mono); font-size: 12px; color: var(--muted); }
-.tcard .n { font-family: var(--display); font-size: 22px; font-weight: 600; }
-.tcard .n small { font-family: var(--body); font-size: 12px; font-weight: 400; color: var(--muted); margin-left: 4px; }
-.tcard .about { font-size: 13px; color: var(--ink-2); }
-.form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; align-items: end; }
-.frow { display: flex; gap: 8px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
-.cli { font-family: var(--mono); font-size: 12.5px; background: var(--bg-2); border: 1px solid var(--rule); border-radius: var(--r-inner);
-  padding: 12px; white-space: pre-wrap; overflow-wrap: anywhere; margin: 14px 0 0; color: var(--ink-2); }
-.cli::first-line { color: var(--muted); }
-.split { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 18px; margin-top: 18px; }
-pre.item { font-family: var(--mono); font-size: 12.5px; background: var(--bg-2); border: 1px solid var(--rule); border-radius: var(--r-inner);
-  padding: 12px; margin: 0; max-height: 540px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.tcard { position: relative; text-align: left; cursor: pointer; border: 1px solid var(--hair); background: none; padding: 14px 16px; display: flex;
+  flex-direction: column; gap: 6px; transition: border-color 0.12s, background 0.12s; }
+.tcard:hover { border-color: var(--hair-2); background: var(--fill); }
+.tcard[aria-pressed="true"] { border-color: var(--fg); background: var(--fill); }
+.tcard b { font-size: 12px; font-weight: 600; letter-spacing: 0.2em; text-transform: uppercase; }
+.tcard .k { font-family: var(--mono); font-size: 11.5px; color: var(--fg-3); }
+.tcard .n { font-weight: 200; font-size: 30px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.tcard .n small { font-size: 10px; font-weight: 600; letter-spacing: 0.2em; text-transform: uppercase; color: var(--fg-3); margin-left: 6px; }
+.tcard .about { font-size: 12.5px; color: var(--fg-2); }
+.form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 16px; align-items: end; }
+.frow { display: flex; gap: 10px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+.cli { font-family: var(--mono); font-size: 12px; background: var(--bg-2); border: 1px solid var(--hair); padding: 12px 14px; white-space: pre-wrap;
+  overflow-wrap: anywhere; margin: 16px 0 0; color: var(--fg-2); }
+.cli::first-line { color: var(--fg-3); }
+.split { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 16px; margin-top: 16px; }
+pre.item { font-family: var(--mono); font-size: 12px; background: var(--bg-2); border: 1px solid var(--hair); padding: 12px 14px; margin: 0;
+  max-height: 540px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--fg-2); }
 
 @media (max-width: 960px) { .two, .split, .summary { grid-template-columns: minmax(0, 1fr); } }
-@media (max-width: 640px) { .view-h h1 { font-size: 32px; } .titlebar input.label { font-size: 26px; } }
+@media (max-width: 640px) { .view-h h1 { font-size: 16px; letter-spacing: 0.24em; } .titlebar input.label { font-size: 22px; } .big { font-size: 48px; } }
+@media (prefers-reduced-motion: reduce) { .pulse.on::after { animation: none; } }
 </style>
 </head>
 <body>
 <header class="appbar"><div class="in">
   <div class="brand" aria-label="PicoCar telemetry">
-    <svg viewBox="0 0 34 34" aria-hidden="true"><rect x="1" y="1" width="32" height="32" rx="9" fill="var(--ink)"/><path d="M5 25l6-7 5 4 6-10 7 6" fill="none" stroke="var(--amber-fill)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
-    <span class="name">PicoCar</span><span class="sub">telemetry</span>
+    <span class="name">PicoCar</span><span class="sub">Telemetry</span>
   </div>
+  <div class="pills" aria-live="polite">
+    <span class="pill"><span class="led" id="dBroker"></span><span id="tBroker">Broker</span></span>
+    <span class="pill"><span class="led" id="dCar"></span><span id="tCar">Car</span></span>
+    <span class="pill"><span class="led on" style="background:var(--fg-2);box-shadow:none"></span><span id="tDb">Database</span></span>
+  </div>
+  <span class="spacer"></span>
   <nav class="seg" aria-label="Views">
     <button data-view="live" aria-current="page">Live</button>
     <button data-view="runs">Runs</button>
     <button data-view="explore">Explore tables</button>
   </nav>
-  <span class="spacer"></span>
-  <div class="pills" aria-live="polite">
-    <span class="pill"><span class="led" id="dBroker"></span><span id="tBroker">Broker</span></span>
-    <span class="pill"><span class="led" id="dCar"></span><span id="tCar">Car</span></span>
-    <span class="pill" id="tDb">Database</span>
-  </div>
 </div></header>
 
 <div class="wrap">
@@ -272,9 +271,9 @@ function chartGroup(container, data) {
     if (i === data.states.length || data.states[i] !== data.states[start]) {
       const st = data.states[start], x0 = x(data.t[start]), x1 = x(data.t[Math.min(i, data.t.length - 1)]);
       const fault = st === 10;
-      band.append(s("rect", { x: x0, y: 2, width: Math.max(1, x1 - x0 - 2), height: 24, rx: 6,
-        fill: fault ? "var(--stop)" : alt ? "var(--band-b)" : "var(--band-a)" }));
-      if (x1 - x0 > 58) { const tx = s("text", { x: x0 + 8, y: 18 }); tx.textContent = MISSION[st] || "S" + st; if (fault) tx.setAttribute("style", "fill:#fff"); else tx.setAttribute("style", "fill:var(--ink-2)"); band.append(tx); }
+      band.append(s("rect", { x: x0, y: 2, width: Math.max(1, x1 - x0 - 2), height: 24, rx: 0,
+        fill: fault ? "rgba(255,59,48,0.75)" : alt ? "var(--band-b)" : "var(--band-a)" }));
+      if (x1 - x0 > 58) { const tx = s("text", { x: x0 + 8, y: 18 }); tx.textContent = (MISSION[st] || "S" + st).toUpperCase(); if (fault) tx.setAttribute("style", "fill:#fff"); else tx.setAttribute("style", "fill:var(--fg-2);font-size:9.5px;font-weight:600;letter-spacing:.16em;text-transform:uppercase"); band.append(tx); }
       alt = !alt; start = i;
     }
   }
@@ -299,7 +298,7 @@ function chartGroup(container, data) {
       // A gap in the records (lost Wi-Fi) breaks the line: drawing
       // straight across it would invent data.
       sr.values.forEach((v, i) => { if (v == null) { pen = false; return; } if (i && data.t[i] - data.t[i - 1] > 1) pen = false; d += (pen ? "L" : "M") + x(data.t[i]).toFixed(1) + " " + y(v).toFixed(1); pen = true; });
-      svg.append(s("path", { d, fill: "none", stroke: sr.color, "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }));
+      svg.append(s("path", { d, fill: "none", stroke: sr.color, "stroke-width": 1.5, "stroke-linejoin": "round", "stroke-linecap": "round" }));
       // A record with gaps on both sides has no line: show it as a dot.
       const gap = (i) => i <= 0 || i >= data.t.length || data.t[i] - data.t[i - 1] > 1 || sr.values[i] == null || sr.values[i - 1] == null;
       sr.values.forEach((v, i) => { if (v != null && gap(i) && gap(i + 1)) svg.append(s("circle", { cx: x(data.t[i]), cy: y(v), r: 2.5, fill: sr.color })); });
@@ -554,7 +553,7 @@ let tables = [], cur = null, lastKey = null;
 async function loadTables() {
   const d = await api("/api/tables");
   tables = d.Tables;
-  $("tDb").textContent = bytes(d.db_bytes); $("dbInfo").textContent = `Same table and key design as DynamoDB, so these tables move to AWS unchanged. Stored in ${d.db}.`;
+  $("tDb").textContent = "Database " + bytes(d.db_bytes); $("dbInfo").textContent = `Same table and key design as DynamoDB, so these tables move to AWS unchanged. Stored in ${d.db}.`;
   const box = $("tableCards"); box.textContent = "";
   tables.forEach((t) => box.append(h("button", { class: "tcard", "aria-pressed": String(!!cur && cur.TableName === t.TableName), "data-t": t.TableName, onclick: () => pick(t.TableName) },
     h("b", {}, t.TableName), h("span", { class: "k" }, t.KeySchema.map((k) => `${k.AttributeName} (${k.KeyType === "HASH" ? "partition" : "sort"})`).join(", ") +
@@ -669,7 +668,7 @@ window.addEventListener("hashchange", () => {
   const hm = location.hash.match(/^#run=(.+)$/);
   if (hm) openRun(decodeURIComponent(hm[1]));
 });
-api("/api/tables").then((d) => { $("tDb").textContent = bytes(d.db_bytes); }).catch(() => {});
+api("/api/tables").then((d) => { $("tDb").textContent = "Database " + bytes(d.db_bytes); }).catch(() => {});
 </script>
 </body>
 </html>

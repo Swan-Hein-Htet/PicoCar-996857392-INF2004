@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PicoCar Mission Control</title>
 <script src="/meters.js"></script>
+<script src="/road.js"></script>
 <style>
 /* Mission-control display: true black, white type, hairlines, colour only
    for state (red = stop/fault, amber = warning).  System fonts only. */
@@ -49,6 +50,69 @@ button, input { font: inherit; color: inherit; }
 
 /* ---- hero: gauges, clock, timeline ---- */
 .hero { padding: 26px 32px 6px; }
+.roadhero { margin-bottom: 6px; }
+/* The mission HUD sits on the road view (moved there at start-up). */
+.road.roadhero { height: 500px; }
+.roadhero .centre { padding: 10px 22px 12px; background: rgba(6,8,11,.55); border: 1px solid rgba(255,255,255,.08);
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); max-width: 460px; }
+.roadhero .state { font-size: 15px; margin-top: 4px; }
+.roadhero .clock { font-size: 44px; margin: 6px 0 4px; }
+.roadhero .clock .t { font-size: 20px; margin-right: 8px; }
+.roadhero .sub { font-size: 12.5px; }
+.roadhero .humpline { margin-top: 8px; padding: 4px 10px; }
+.roadhero .humpline b { font-size: 22px; }
+.roadhero .alert { margin: 8px 0 0; padding: 7px 0 0; max-width: 416px; border: 0; border-top: 1px solid rgba(255,59,48,.35);
+  background: none; font-size: 10.5px; letter-spacing: 0.14em; line-height: 1.5; text-align: center;
+  display: none; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.roadhero .alert.show { display: -webkit-box; }
+.roadhero .alert.show, .roadhero .alert.stale { background: none; border-left: 0; border-right: 0; border-bottom: 0; }
+.roadhero .alert.stale { border-top-color: rgba(255,176,32,.35); }
+.roadhero .centre:has(.alert.show) { border-color: rgba(255,59,48,.55); background: rgba(38,6,6,.62); }
+.roadhero .centre:has(.alert.stale) { border-color: rgba(255,176,32,.5); background: rgba(34,24,4,.6); }
+.roadhero .centre:has(.alert.show) .sub { display: none; }
+.roadhero .gauge { width: 132px; padding: 6px 0 2px; border-radius: 50%; background: radial-gradient(closest-side, rgba(6,8,11,.75), rgba(6,8,11,.45) 80%, transparent); }
+.roadhero .gauge svg { width: 118px; height: 118px; }
+.roadhero .gauge .glbl { margin-top: -10px; font-size: 10px; }
+.roadhero .timeline { width: 120px; height: 196px; margin: 0; }
+.roadhero .timeline .msl { font-size: 10px; letter-spacing: 0.2em; }
+.roadhero .timeline .msl.v { text-anchor: start; }
+.roadhero .timeline .ms { stroke-width: 1.5; }
+.roadhero .rv-tl { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
+.roadhero .rv-tl .timeline { padding: 8px 8px 8px 6px; box-sizing: content-box; background: rgba(6,8,11,.5); border: 1px solid rgba(255,255,255,.08); }
+.roadhero .phases { gap: 6px; margin: 0; }
+.roadhero .phase { font-size: 10px; padding: 4px 9px 3px; background: rgba(10,12,16,.7); border: 1px solid rgba(255,255,255,.12); }
+.roadhero .phase.on { background: #fff; color: #000; border-color: #fff; }
+.hud:empty { display: none; }
+/* Barcode panel on the HUD: the letter, its command, and where it is
+   between read and executed (from the car's T2/T6 log lines). */
+.bcw { width: 244px; padding: 12px 14px 12px; background: rgba(6,8,11,.62); border: 1px solid rgba(255,255,255,.12);
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); text-align: left; transition: border-color .3s, box-shadow .3s; }
+.bcw.flash { border-color: #fff; box-shadow: 0 0 0 1px #fff, 0 0 24px rgba(255,255,255,.25); }
+.bcw.rej { border-color: rgba(255,176,32,.6); }
+.bcw-h { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.bcw-h .lbl { font-size: 10px; color: var(--fg-2); }
+.bcw-st { font-size: 10px; font-weight: 600; letter-spacing: .18em; text-transform: uppercase; color: var(--fg-3); white-space: nowrap; }
+.bcw-st.go { color: #4DA3FF; } .bcw-st.ok { color: var(--green); } .bcw-st.warn { color: var(--amber); }
+.bcw-main { display: flex; align-items: center; gap: 12px; margin-top: 8px; }
+.bcw-l { font-weight: 200; font-size: 58px; line-height: .9; min-width: 40px; text-align: center; font-variant-numeric: tabular-nums; }
+.bcw.rej .bcw-l { color: var(--amber); }
+.bcw-r { min-width: 0; flex: 1; }
+.bcw-r svg { width: 100%; height: 22px; display: block; }
+.bcw-r svg rect { fill: var(--fg); }
+.bcw-cmd { margin-top: 6px; font-size: 12.5px; line-height: 1.3; color: var(--fg); }
+.bcw-steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 3px; margin: 12px 0 0; padding: 0; list-style: none; }
+.bcw-steps li { font-size: 8.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--fg-3); padding-top: 6px;
+  border-top: 2px solid rgba(255,255,255,.14); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bcw-steps li.done { color: var(--fg-2); border-top-color: var(--fg-2); }
+.bcw-steps li.now { color: #fff; border-top-color: #4DA3FF; }
+.bcw-steps li.skip { opacity: .35; }
+.bcw-hist { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 10px; min-height: 0; }
+.bcw-hist:empty { display: none; }
+.bcw-hist span { font-size: 10px; font-weight: 600; letter-spacing: .08em; padding: 2px 6px; border: 1px solid rgba(255,255,255,.14); color: var(--fg-2); }
+.bcw-hist span.ok { border-color: rgba(48,209,88,.45); } .bcw-hist span.bad { color: var(--amber); border-color: rgba(255,176,32,.45); }
+@keyframes bcwpop { 0% { transform: scale(1.35); opacity: .3; } 100% { transform: scale(1); opacity: 1; } }
+.bcw.flash .bcw-l { animation: bcwpop .45s cubic-bezier(.2,.8,.2,1); }
+@media (prefers-reduced-motion: reduce) { .bcw.flash .bcw-l { animation: none; } .bcw { transition: none; } }
 .hud { display: grid; grid-template-columns: 200px minmax(0, 1fr) 200px; align-items: center; gap: 24px; }
 .gauge { text-align: center; }
 .gauge svg { width: 170px; height: 170px; display: block; margin: 0 auto; }
@@ -210,6 +274,16 @@ button, input { font: inherit; color: inherit; }
   .hud { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
   .centre { grid-column: 1 / span 2; grid-row: 1; }
   .gauge svg { width: 130px; height: 130px; }
+  .roadhero .rv-layer { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+    grid-template-areas: "tc tc" "tl tr" ". ." "bl br" "bc bc"; }
+  .roadhero .centre { max-width: none; width: 100%; }
+  .roadhero .clock { font-size: 32px; } .roadhero .clock .t { font-size: 16px; }
+  .roadhero .gauge { width: 100px; } .roadhero .gauge svg { width: 90px; height: 90px; }
+  .roadhero .timeline { display: none; }
+  .road.roadhero { height: 720px; }
+  .roadhero .rv-chips { display: none; }
+  .bcw { width: 100%; max-width: 244px; padding: 10px 12px; } .bcw-l { font-size: 40px; } .bcw-cmd { font-size: 12px; }
+  .bcw-steps { margin-top: 8px; } .bcw-steps li { font-size: 0; padding-top: 0; height: 0; } .bcw-hist { display: none; }
   .clock { font-size: 48px; } .clock .t { font-size: 22px; }
   .state { font-size: 15px; letter-spacing: 0.24em; }
   .grid { grid-template-columns: minmax(0, 1fr); }
@@ -236,6 +310,7 @@ button, input { font: inherit; color: inherit; }
 </header>
 
 <section class="hero" aria-label="Mission status">
+  <div id="road" class="roadhero"></div>
   <div class="hud">
     <div class="gauge">
       <svg viewBox="0 0 200 200" aria-hidden="true">
@@ -420,6 +495,34 @@ function gauge(id, frac) { $(id).setAttribute("stroke-dasharray", `${Math.max(0.
 gauge("gSpeed", 0); gauge("gDist", 0);
 
 const meters = window.PicoMeters($("meters"));
+/* Road view: live telemetry, or a made-up run with ?demo=road. */
+const road = window.PicoRoad($("road"), { speed: false, horizon: 0.33, zoom: 1.05 });
+/* One HUD: mission status and clock top centre, the dials bottom left and
+   right, phases and the mission timeline bottom centre. */
+(() => {
+  const sl = road.slots, dials = document.querySelectorAll(".hud .gauge");
+  const centre = document.querySelector(".hud .centre");
+  sl.tc.append(centre);
+  centre.append($("alert"));          /* alerts live inside the status panel */
+  sl.bl.append(dials[0]); sl.br.append(dials[1]);
+  sl.bc.append($("phases"));
+  /* The mission timeline as a vertical marker under the next-move card. */
+  const tl = $("timeline");
+  tl.setAttribute("viewBox", "0 0 120 196"); tl.dataset.vertical = "1";
+  ["arc", "prog"].forEach((id) => $(id).setAttribute("d", "M 12 10 L 12 186"));
+  sl.tl.append(tl);
+  /* Barcode panel, top right under the gear. */
+  const bcw = document.createElement("div");
+  bcw.className = "bcw"; bcw.id = "bcw"; bcw.setAttribute("role", "status"); bcw.setAttribute("aria-live", "polite");
+  bcw.innerHTML = `<div class="bcw-h"><span class="lbl">Barcode</span><span class="bcw-st" id="bcwSt">Waiting</span></div>
+    <div class="bcw-main"><div class="bcw-l" id="bcwL">-</div><div class="bcw-r"><svg id="bcwBars" viewBox="0 0 47 30" preserveAspectRatio="none" aria-hidden="true"></svg>
+    <div class="bcw-cmd" id="bcwCmd">None read yet</div></div></div>
+    <ol class="bcw-steps" aria-label="Command progress"><li data-k="read">Read</li><li data-k="queued">Queued</li><li data-k="junction">Junction</li><li data-k="done">Done</li></ol>
+    <div class="bcw-hist" id="bcwHist" aria-label="Letters read this session"></div>`;
+  sl.tr.append(bcw);
+})();
+const roadDemo = new URLSearchParams(location.search).get("demo") === "road";
+if (roadDemo) window.PicoRoad.demo((d) => road.update(d));
 
 /* ---------- timeline ---------- */
 const arc = $("arc"), L = arc.getTotalLength(), prog = $("prog");
@@ -427,7 +530,9 @@ prog.style.strokeDasharray = L; prog.style.strokeDashoffset = L;
 const ms = MILESTONES.map(([name, , f]) => {
   const p = arc.getPointAtLength(f * L);
   const c = document.createElementNS(NS, "circle"); c.setAttribute("cx", p.x); c.setAttribute("cy", p.y); c.setAttribute("r", 5); c.setAttribute("class", "ms");
-  const t = document.createElementNS(NS, "text"); t.setAttribute("x", p.x); t.setAttribute("y", p.y + 28); t.setAttribute("class", "msl"); t.textContent = name.toUpperCase();
+  const vert = $("timeline").dataset.vertical === "1";
+  const t = document.createElementNS(NS, "text"); t.setAttribute("x", vert ? p.x + 16 : p.x); t.setAttribute("y", vert ? p.y + 3.5 : p.y + 28);
+  t.setAttribute("class", "msl" + (vert ? " v" : "")); t.textContent = name.toUpperCase();
   $("milestones").append(c, t); return { c, t };
 });
 let mkF = 0, mkTarget = -1, mkAnim = null;
@@ -489,6 +594,7 @@ function drawBarcode(letter) {
 /* ---------- state ---------- */
 function setDot(id, cls) { $(id).className = "dot " + cls; }
 function render(s) {
+  if (!roadDemo) road.update(s);
   setDot("dBroker", s.broker ? "on" : "bad");
   $("tBroker").textContent = s.broker ? "Broker link" : "Broker offline";
   $("logPath").textContent = s.log || "-";
@@ -507,6 +613,7 @@ function render(s) {
   } else if (r && stale) {
     al.className = "alert show stale"; al.textContent = "Telemetry lost. Car off, out of range or restarting. Showing last known state.";
   } else al.className = "alert";
+  al.title = al.className.includes("show") ? al.textContent : "";   /* full text if clamped */
 
   const next = { 1: "bCal", 2: "bGo", 9: "bGo", 10: "bReset" }[stale ? -1 : state];
   ["bCal", "bGo", "bReset"].forEach((id) => $(id).classList.toggle("next", id === next));
@@ -612,9 +719,67 @@ document.querySelectorAll("[data-cmd]").forEach((b) => b.addEventListener("click
 $("bStop").onclick = () => command("stop");
 $("cmdForm").addEventListener("submit", (e) => { e.preventDefault(); const v = $("cmd").value.trim(); if (v) { command(v); $("cmd").value = ""; } });
 const es = new EventSource("/events");
+/* ---------- barcode panel: read -> queued -> at junction -> done ---------- */
+const BC_CMD = { left: "Turn left at the next junction", right: "Turn right at the next junction", straight: "Straight on at the next junction",
+  "u-turn": "U-turn now", none: "No command for this letter" };
+const BC_REJECT = { 1: "wrong bar count", 2: "start/stop framing", 3: "bar width ratio", 4: "unknown pattern", 5: "too long" };
+const BC_STEPS = ["read", "queued", "junction", "done"];
+let bcCur = null, bcHist = [], bcFlashT = 0;
+function bcBars(letter) {
+  const svg = $("bcwBars");
+  if (!letter || !(letter in CODE39)) { svg.innerHTML = ""; return; }
+  let x = 0, out = "";
+  ["*", letter, "*"].forEach((c, pos) => {
+    if (pos) x += 1;
+    for (let bit = 0; bit < 9; bit++) { const w = (CODE39[c] >> (8 - bit)) & 1 ? 3 : 1; if (bit % 2 === 0) out += `<rect x="${x}" y="0" width="${w}" height="30"/>`; x += w; }
+  });
+  svg.innerHTML = out;
+}
+function bcDraw(flash) {
+  const c = bcCur, box = $("bcw");
+  if (!box) return;
+  box.classList.toggle("rej", !!c && c.rejected);
+  $("bcwL").textContent = c ? (c.rejected ? "?" : c.letter) : "-";
+  bcBars(c && !c.rejected ? c.letter : null);
+  $("bcwCmd").textContent = !c ? "None read yet" : c.rejected ? `Not read: ${c.reason}` : (BC_CMD[c.cmd] || c.cmd);
+  const st = $("bcwSt");
+  const label = !c ? ["Waiting", ""] : c.rejected ? ["Rejected", "warn"] : c.step === "done" ? ["Executed", "ok"] :
+    c.step === "junction" ? ["At junction", "go"] : c.step === "queued" ? ["Queued", "go"] : c.cmd === "none" ? ["Ignored", ""] : ["Read", "go"];
+  st.textContent = label[0]; st.className = "bcw-st" + (label[1] ? " " + label[1] : "");
+  const at = c && !c.rejected ? BC_STEPS.indexOf(c.step) : -1;
+  document.querySelectorAll(".bcw-steps li").forEach((li, i) => {
+    const skip = !!c && !c.rejected && (c.cmd === "u-turn" || c.cmd === "none") && (i === 1 || i === 2);
+    li.className = skip ? "skip" : i < at ? "done" : i === at ? (c.step === "done" ? "done" : "now") : "";
+  });
+  const h = $("bcwHist"); h.textContent = "";
+  bcHist.slice(-8).forEach((e) => { const sp = document.createElement("span"); sp.className = e.rejected ? "bad" : e.step === "done" ? "ok" : "";
+    sp.textContent = e.rejected ? "\u2715" : e.letter + (e.step === "done" ? " \u2713" : ""); sp.title = e.rejected ? "Not read: " + e.reason : `${e.letter}: ${BC_CMD[e.cmd] || e.cmd}`; h.append(sp); });
+  if (flash) { box.classList.add("flash"); clearTimeout(bcFlashT); bcFlashT = setTimeout(() => box.classList.remove("flash"), 1400); }
+}
+function barcodeLine(t) {
+  let m;
+  if ((m = t.match(/T2: barcode '(.)'.*->\s*([a-z-]+)/i))) {
+    bcCur = { letter: m[1], cmd: m[2].toLowerCase(), step: "read", rejected: false };
+    if (!(bcCur.cmd in BC_CMD)) bcCur.cmd = "none";
+    bcHist.push(bcCur); bcDraw(true);
+  } else if ((m = t.match(/T2: barcode rejected, reason (\d+)/))) {
+    const rej = { rejected: true, reason: BC_REJECT[m[1]] || "reason " + m[1] };
+    bcHist.push(rej);
+    /* A command still waiting for its junction stays on show; the failed
+       read only joins the history. */
+    if (bcCur && !bcCur.rejected && (bcCur.step === "queued" || bcCur.step === "junction")) bcDraw(false);
+    else { bcCur = rej; bcDraw(true); }
+  } else if (bcCur && !bcCur.rejected && /T6: command \d+ pending/.test(t)) { bcCur.step = "queued"; bcDraw(false); }
+  else if (bcCur && !bcCur.rejected && /T2: junction .*command waiting/.test(t)) { bcCur.step = "junction"; bcDraw(false); }
+  else if (bcCur && !bcCur.rejected && /T6: command \d+ executed/.test(t)) { bcCur.step = "done"; bcDraw(false); }
+  else if (/STATE \S+ \S+ -> S1 CALIBRATE/.test(t)) { bcCur = null; bcDraw(false); }    /* new calibration: panel clears, history stays */
+}
+bcDraw(false);
+
 es.onmessage = (m) => {
   const ev = JSON.parse(m.data);
   if (ev.k === "state") { render(ev); return; }
+  if (ev.k === "car") barcodeLine(ev.t);
   if (ev.k === "car" && /T6: barcode map refused/.test(ev.t)) { mapNote = "Refused: " + ev.t.replace(/.*refused:?\s*/, ""); mapNoteBad = true; drawMap(); }
   addLine(ev);
 };

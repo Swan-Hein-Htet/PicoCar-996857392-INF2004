@@ -30,6 +30,7 @@ import car_console as cc  # noqa: E402
 PAGE = os.path.join(HERE, "car_ui.html")
 MANUAL = os.path.join(HERE, "manual.html")
 METERS = os.path.join(HERE, "meters.js")
+ROAD = os.path.join(HERE, "road.js")
 THEME = os.path.join(HERE, "..", "ui", "theme.css")
 DRIVE_KEYS = "wasd .!jrbtpfo"   # drive, stop, plaid off/on, stunts
 
@@ -235,23 +236,25 @@ def make_handler(console, hub, ui_port):
         def do_GET(self):
             if not self._local():
                 return self._reply(403, b"forbidden")
-            if self.path in ("/manual", "/manual.html"):
+            path = self.path.split("?", 1)[0]     # ?demo=road and the like
+            if path in ("/manual", "/manual.html"):
                 with open(MANUAL, "rb") as handle:
                     return self._reply(200, handle.read(),
                                        "text/html; charset=utf-8")
-            if self.path in ("/", "/index.html"):
+            if path in ("/", "/index.html"):
                 with open(PAGE, "rb") as handle:
                     return self._reply(200, handle.read(),
                                        "text/html; charset=utf-8")
-            if self.path == "/meters.js":
-                with open(METERS, "rb") as handle:
+            if path in ("/meters.js", "/road.js"):
+                with open(METERS if path == "/meters.js" else ROAD,
+                          "rb") as handle:
                     return self._reply(200, handle.read(),
                                        "text/javascript; charset=utf-8")
-            if self.path == "/theme.css":
+            if path == "/theme.css":
                 with open(THEME, "rb") as handle:
                     return self._reply(200, handle.read(),
                                        "text/css; charset=utf-8")
-            if self.path == "/events":
+            if path == "/events":
                 return self._events()
             return self._reply(404, b"not found")
 

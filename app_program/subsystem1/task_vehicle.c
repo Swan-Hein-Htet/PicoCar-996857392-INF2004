@@ -65,6 +65,15 @@
 #define TURN_DEG                90U
 #define UTURN_DEG               180U
 #define STRAIGHT_PAST_MM        30U
+#define JUNC_SPEED_MMS          40U     /* junction creep and turn (D78) */
+#define JUNC_PAUSE_MS           400U    /* still between the steps        */
+#ifndef JUNC_AXLE_EXTRA_MM
+#define JUNC_AXLE_EXTRA_MM      10U     /* the junction is flagged at the
+                                           bar's near edge: on to its centre
+                                           (real car turned ~1 cm early,
+                                           2026-11-23, D79)              */
+#endif
+#define JUNC_AXLE_MM            (LINE_SENSOR_AHEAD_MM + JUNC_AXLE_EXTRA_MM)
 #define SEARCH_DEG              45U
 #define SEARCH_STEP_MM          60U
 #define SEARCH_ROUNDS           2U
@@ -115,6 +124,8 @@ typedef struct
     bool        b_bc_odom;
     uint16_t    cross_used;     /* g_cross_word bar already turned at */
     uint32_t    late_past;      /* junction already passed by, mm   */
+    uint16_t    junc_at;        /* odometer when the IR row met it  */
+    uint32_t    pause_from;     /* now_ms() a junction pause began  */
 } vehicle_ctx_t;
 
 /* Barcode letter -> command (app.h).  Written here only. */
@@ -257,31 +268,82 @@ start_manoeuvre (manoeuvre_t man, uint32_t nav)
     {
         request(MREQ_TURN_LEFT, UTURN_DEG);
     }
-    else if (0U != g_vc.late_past)
+    else
     {
-        /* The bar is behind the IR row already (D72): put the axle on it,
-           forward or back by what is left. */
-        uint32_t const past = g_vc.late_past;
-
+        /* Junction (D78, owner 2026-11-23): stop, pause, creep the axle
+           onto it at JUNC_SPEED_MMS, pause, turn slowly, pause, then
+           follow.  Spinning at running speed browned the supply out
+           (real car 2026-11-19/23).  Where the IR row met the bar: now,
+           or late_past back (D72).  Steps: 0 stopping, 1 pause, 2 creep,
+           3 pause, 4 turn, 5 pause. */
+        g_vc.junc_at = (uint16_t)(odom_now_mm() - (uint16_t)g_vc.late_past);
         g_vc.late_past = 0U;
-        if (past < LINE_SENSOR_AHEAD_MM)
+        request(MREQ_STOP, 0U);
+    }
+}
+
+/* Put the axle on the junction: forward or back by what the stop left. */
+static void
+junction_creep (void)
+{
+    uint32_t const past = odom_delta_mm(odom_now_mm(), g_vc.junc_at);
+
+    request(MREQ_SET_SPEED, JUNC_SPEED_MMS);
+    if (past >= 0x8000U)
+    {
+        request(MREQ_FORWARD, JUNC_AXLE_MM);            /* odometer back */
+    }
+    else if (past < JUNC_AXLE_MM)
+    {
+        request(MREQ_FORWARD, JUNC_AXLE_MM - past);
+    }
+    else if (past > JUNC_AXLE_MM)
+    {
+        request(MREQ_BACKWARD, past - JUNC_AXLE_MM);
+    }
+    else
+    {
+        request(MREQ_FORWARD, 1U);          /* on it: a token move */
+    }
+}
+
+/* Junction steps 1, 3, 5: after the pause, the next move (periodic). */
+static void
+junction_tick (void)
+{
+    if ((MAN_JUNCTION != g_vc.man) ||
+        ((1U != g_vc.step) && (3U != g_vc.step) && (5U != g_vc.step)) ||
+        ((now_ms() - g_vc.pause_from) < JUNC_PAUSE_MS))
+    {
+        return;
+    }
+    if (1U == g_vc.step)
+    {
+        g_vc.step = 2U;
+        junction_creep();
+    }
+    else if (3U == g_vc.step)
+    {
+        g_vc.step = 4U;
+        request(MREQ_SET_SPEED, JUNC_SPEED_MMS);
+        if (NAV_LEFT == g_vc.executing)
         {
-            request(MREQ_FORWARD, LINE_SENSOR_AHEAD_MM - past);
+            request(MREQ_TURN_LEFT, TURN_DEG);
         }
-        else if (past > LINE_SENSOR_AHEAD_MM)
+        else if (NAV_RIGHT == g_vc.executing)
         {
-            request(MREQ_BACKWARD, past - LINE_SENSOR_AHEAD_MM);
+            request(MREQ_TURN_RIGHT, TURN_DEG);
         }
         else
         {
-            request(MREQ_FORWARD, 1U);      /* on it: a token move */
+            request(MREQ_FORWARD, STRAIGHT_PAST_MM);    /* NAV_STRAIGHT */
         }
     }
     else
     {
-        /* IR row is ahead of the axle: drive the axle onto the junction
-           first.  END (all-black > 60 mm) is decided during this move. */
-        request(MREQ_FORWARD, LINE_SENSOR_AHEAD_MM);
+        tm_printf((UB *)"T6: command %d executed\n", (INT)g_vc.executing);
+        g_vc.executing = NAV_NONE;
+        follow(MISSION_FOLLOW);
     }
 }
 
@@ -319,21 +381,16 @@ late_junction (uint32_t nav)
 static void
 manoeuvre_done (void)
 {
-    if ((MAN_JUNCTION == g_vc.man) && (0U == g_vc.step))
+    if ((MAN_JUNCTION == g_vc.man) &&
+        ((0U == g_vc.step) || (2U == g_vc.step) || (4U == g_vc.step)))
     {
-        g_vc.step = 1U;
-        if (NAV_LEFT == g_vc.executing)
-        {
-            request(MREQ_TURN_LEFT, TURN_DEG);
-            return;
-        }
-        if (NAV_RIGHT == g_vc.executing)
-        {
-            request(MREQ_TURN_RIGHT, TURN_DEG);
-            return;
-        }
-        request(MREQ_FORWARD, STRAIGHT_PAST_MM);    /* NAV_STRAIGHT */
+        g_vc.step++;                    /* into a pause (D78) */
+        g_vc.pause_from = now_ms();
         return;
+    }
+    if (MAN_JUNCTION == g_vc.man)
+    {
+        return;                         /* pausing: junction_tick */
     }
 
     tm_printf((UB *)"T6: command %d executed\n", (INT)g_vc.executing);
@@ -713,7 +770,7 @@ handle_events (UINT ptn)
 
         case MISSION_MANOEUVRE:
             if ((0U != (ptn & FLG_END)) && (MAN_JUNCTION == g_vc.man) &&
-                (0U == g_vc.step))
+                (g_vc.step <= 2U))
             {
                 request(MREQ_STOP, 0U);     /* end marker beats the turn */
                 enter(MISSION_FINISHED);
@@ -1353,6 +1410,10 @@ periodic (void)
 
     switch (g_vc.state)
     {
+        case MISSION_MANOEUVRE:
+            junction_tick();            /* pauses between steps (D78) */
+        break;
+
         case MISSION_INIT:
             if (in_state_ms() >= INIT_SETTLE_MS)
             {
